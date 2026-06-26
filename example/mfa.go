@@ -1,6 +1,6 @@
 package example
 
-import "github.com/zainokta/openapi-gen"
+import "github.com/thiagozs/go-openapi-gen"
 
 // CustomizeMFA provides comprehensive Multi-Factor Authentication endpoint customization
 //

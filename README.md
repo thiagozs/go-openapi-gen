@@ -24,7 +24,7 @@ A powerful, framework-agnostic OpenAPI documentation generator for Go web applic
 ### Installation
 
 ```bash
-go get github.com/zainokta/openapi-gen
+go get github.com/thiagozs/go-openapi-gen
 ```
 
 ### Basic Usage
@@ -36,8 +36,8 @@ package main
 
 import (
     "github.com/cloudwego/hertz/pkg/app/server"
-    "github.com/zainokta/openapi-gen"
-    "github.com/zainokta/openapi-gen/integration"
+    "github.com/thiagozs/go-openapi-gen"
+    "github.com/thiagozs/go-openapi-gen/integration"
 )
 
 func main() {
@@ -64,8 +64,8 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    "github.com/zainokta/openapi-gen"
-    "github.com/zainokta/openapi-gen/integration"
+    "github.com/thiagozs/go-openapi-gen"
+    "github.com/thiagozs/go-openapi-gen/integration"
 )
 
 func main() {
@@ -354,7 +354,7 @@ err := openapi.EnableDocs(framework, httpServer,
 ### Route Customization
 
 ```go
-import "github.com/zainokta/openapi-gen/example"
+import "github.com/thiagozs/go-openapi-gen/example"
 
 err := openapi.EnableDocs(framework, httpServer,
     openapi.WithCustomizer(example.CustomizeAuthentication),
@@ -497,8 +497,8 @@ Make sure to use the correct import paths:
 
 ```go
 import (
-    "github.com/zainokta/openapi-gen"
-    "github.com/zainokta/openapi-gen/integration"
+    "github.com/thiagozs/go-openapi-gen"
+    "github.com/thiagozs/go-openapi-gen/integration"
 )
 
 // Correct usage

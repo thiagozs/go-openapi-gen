@@ -3,8 +3,8 @@ package common
 import (
 	"reflect"
 
-	"github.com/zainokta/openapi-gen/analyzer"
-	"github.com/zainokta/openapi-gen/spec"
+	"github.com/thiagozs/go-openapi-gen/analyzer"
+	"github.com/thiagozs/go-openapi-gen/spec"
 )
 
 // SchemaAnalyzer provides utilities for analyzing and generating OpenAPI schemas
@@ -40,8 +40,8 @@ func (sa *SchemaAnalyzer) GenerateFallbackSchemas() analyzer.HandlerSchema {
 		Type: "object",
 		Properties: map[string]spec.Schema{
 			"data": {
-				Type:        "object",
-				Description: "Request payload (schema analysis unavailable in production mode)",
+				Type:                 "object",
+				Description:          "Request payload (schema analysis unavailable in production mode)",
 				AdditionalProperties: &spec.Schema{Type: "any"},
 			},
 		},
@@ -53,8 +53,8 @@ func (sa *SchemaAnalyzer) GenerateFallbackSchemas() analyzer.HandlerSchema {
 		Type: "object",
 		Properties: map[string]spec.Schema{
 			"data": {
-				Type:        "object",
-				Description: "Response data",
+				Type:                 "object",
+				Description:          "Response data",
 				AdditionalProperties: &spec.Schema{Type: "any"},
 			},
 			"message": {
@@ -203,7 +203,7 @@ func (sa *SchemaAnalyzer) CreateArraySchema(items spec.Schema) spec.Schema {
 // CreateMapSchema creates a map schema with given key and value types
 func (sa *SchemaAnalyzer) CreateMapSchema(keySchema, valueSchema spec.Schema) spec.Schema {
 	return spec.Schema{
-		Type: "object",
+		Type:                 "object",
 		AdditionalProperties: &valueSchema,
 	}
 }
@@ -211,7 +211,7 @@ func (sa *SchemaAnalyzer) CreateMapSchema(keySchema, valueSchema spec.Schema) sp
 // CreateStringSchema creates a string schema with validation
 func (sa *SchemaAnalyzer) CreateStringSchema(minLength, maxLength *int64, pattern, format string) spec.Schema {
 	schema := spec.Schema{Type: "string"}
-	
+
 	if minLength != nil {
 		minInt := int(*minLength)
 		schema.MinLength = &minInt
@@ -226,14 +226,14 @@ func (sa *SchemaAnalyzer) CreateStringSchema(minLength, maxLength *int64, patter
 	if format != "" {
 		schema.Format = format
 	}
-	
+
 	return schema
 }
 
 // CreateNumberSchema creates a number schema with validation
 func (sa *SchemaAnalyzer) CreateNumberSchema(minimum, maximum *float64, multipleOf *float64, format string) spec.Schema {
 	schema := spec.Schema{Type: "number"}
-	
+
 	if minimum != nil {
 		schema.Minimum = minimum
 	}
@@ -246,14 +246,14 @@ func (sa *SchemaAnalyzer) CreateNumberSchema(minimum, maximum *float64, multiple
 	if format != "" {
 		schema.Format = format
 	}
-	
+
 	return schema
 }
 
 // CreateIntegerSchema creates an integer schema with validation
 func (sa *SchemaAnalyzer) CreateIntegerSchema(minimum, maximum *int64, multipleOf *int64, format string) spec.Schema {
 	schema := spec.Schema{Type: "integer"}
-	
+
 	if minimum != nil {
 		minFloat := float64(*minimum)
 		schema.Minimum = &minFloat
@@ -269,7 +269,7 @@ func (sa *SchemaAnalyzer) CreateIntegerSchema(minimum, maximum *int64, multipleO
 	if format != "" {
 		schema.Format = format
 	}
-	
+
 	return schema
 }
 

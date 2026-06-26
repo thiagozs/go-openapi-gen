@@ -1,7 +1,7 @@
 package openapi
 
 import (
-	"github.com/zainokta/openapi-gen/parser"
+	"github.com/thiagozs/go-openapi-gen/parser"
 	"regexp"
 	"strings"
 )

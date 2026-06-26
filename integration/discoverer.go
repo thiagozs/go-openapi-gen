@@ -5,7 +5,7 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/gin-gonic/gin"
-	"github.com/zainokta/openapi-gen/spec"
+	"github.com/thiagozs/go-openapi-gen/spec"
 )
 
 // RouteDiscoverer interface for framework-agnostic route discovery

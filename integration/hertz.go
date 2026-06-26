@@ -17,10 +17,10 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/route"
 
-	"github.com/zainokta/openapi-gen/analyzer"
-	"github.com/zainokta/openapi-gen/integration/common"
-	openapiParser "github.com/zainokta/openapi-gen/parser"
-	"github.com/zainokta/openapi-gen/spec"
+	"github.com/thiagozs/go-openapi-gen/analyzer"
+	"github.com/thiagozs/go-openapi-gen/integration/common"
+	openapiParser "github.com/thiagozs/go-openapi-gen/parser"
+	"github.com/thiagozs/go-openapi-gen/spec"
 )
 
 // HertzRouteDiscoverer implements RouteDiscoverer for CloudWeGo Hertz

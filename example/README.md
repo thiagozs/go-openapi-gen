@@ -15,7 +15,7 @@ The OpenAPI generator provides three levels of customization:
 ### Simple Integration (Recommended)
 ```go
 // In your main.go
-import "github.com/zainokta/openapi-gen"
+import "github.com/thiagozs/go-openapi-gen"
 
 // Minimal setup with defaults
 err := openapi.EnableDocs(framework, httpServer)
@@ -33,7 +33,7 @@ if err != nil {
 import (
     "log/slog"
     "os"
-    "github.com/zainokta/openapi-gen"
+    "github.com/thiagozs/go-openapi-gen"
 )
 
 // Custom config and logger
@@ -70,8 +70,8 @@ if err != nil {
 ### Advanced Integration with Customization
 ```go
 import (
-    "github.com/zainokta/openapi-gen"
-    "github.com/zainokta/openapi-gen/example"
+    "github.com/thiagozs/go-openapi-gen"
+    "github.com/thiagozs/go-openapi-gen/example"
 )
 
 // Multiple customizations with options pattern
@@ -89,7 +89,7 @@ if err != nil {
 
 ### Custom Framework Integration
 ```go
-import "github.com/zainokta/openapi-gen"
+import "github.com/thiagozs/go-openapi-gen"
 
 // Implement custom route discoverer for your framework
 type MyFrameworkDiscoverer struct {
@@ -167,7 +167,7 @@ Generate static schema files using the CLI tool:
 go generate ./...
 
 # Or specify files explicitly
-go run github.com/zainokta/openapi-gen/cmd/gen-schemas -output ./schemas handlers/*.go
+go run github.com/thiagozs/go-openapi-gen/cmd/gen-schemas -output ./schemas handlers/*.go
 ```
 
 This creates JSON schema files in the specified directory (default: `./schemas`).

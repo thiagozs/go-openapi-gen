@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/zainokta/openapi-gen/spec"
+	"github.com/thiagozs/go-openapi-gen/spec"
 
 	"golang.org/x/tools/go/packages"
 )

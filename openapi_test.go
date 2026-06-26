@@ -3,7 +3,7 @@ package openapi
 import (
 	"testing"
 
-	"github.com/zainokta/openapi-gen/parser"
+	"github.com/thiagozs/go-openapi-gen/parser"
 
 	"github.com/stretchr/testify/assert"
 )

@@ -1,8 +1,8 @@
 package parser
 
 import (
-	"github.com/zainokta/openapi-gen/spec"
 	"fmt"
+	"github.com/thiagozs/go-openapi-gen/spec"
 	"go/ast"
 	"go/parser"
 	"go/token"

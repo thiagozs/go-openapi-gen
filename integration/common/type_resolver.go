@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/zainokta/openapi-gen/analyzer"
+	"github.com/thiagozs/go-openapi-gen/analyzer"
 )
 
 // TypeResolver provides utilities for resolving Go types from various sources

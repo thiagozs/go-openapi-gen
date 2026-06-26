@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/zainokta/openapi-gen/spec"
+	"github.com/thiagozs/go-openapi-gen/spec"
 )
 
 // SchemaRegistry manages manual schema registration and overrides
@@ -369,11 +369,11 @@ func (sr *SchemaRegistry) loadSchemaFile(filePath string) error {
 
 	// Convert map[string]interface{} to spec.Schema
 	handlerSchema := HandlerSchema{}
-	
+
 	if schemaFile.RequestSchema != nil {
 		handlerSchema.RequestSchema = sr.convertToSpecSchema(schemaFile.RequestSchema)
 	}
-	
+
 	if schemaFile.ResponseSchema != nil {
 		handlerSchema.ResponseSchema = sr.convertToSpecSchema(schemaFile.ResponseSchema)
 	}
@@ -387,15 +387,15 @@ func (sr *SchemaRegistry) loadSchemaFile(filePath string) error {
 // convertToSpecSchema converts a map[string]interface{} to spec.Schema
 func (sr *SchemaRegistry) convertToSpecSchema(schemaMap map[string]interface{}) spec.Schema {
 	schema := spec.Schema{}
-	
+
 	if typ, ok := schemaMap["type"].(string); ok {
 		schema.Type = typ
 	}
-	
+
 	if desc, ok := schemaMap["description"].(string); ok {
 		schema.Description = desc
 	}
-	
+
 	if props, ok := schemaMap["properties"].(map[string]interface{}); ok {
 		schema.Properties = make(map[string]spec.Schema)
 		for key, value := range props {
@@ -404,7 +404,7 @@ func (sr *SchemaRegistry) convertToSpecSchema(schemaMap map[string]interface{}) 
 			}
 		}
 	}
-	
+
 	if required, ok := schemaMap["required"].([]interface{}); ok {
 		schema.Required = make([]string, len(required))
 		for i, req := range required {
@@ -413,16 +413,16 @@ func (sr *SchemaRegistry) convertToSpecSchema(schemaMap map[string]interface{}) 
 			}
 		}
 	}
-	
+
 	if format, ok := schemaMap["format"].(string); ok {
 		schema.Format = format
 	}
-	
+
 	if items, ok := schemaMap["items"].(map[string]interface{}); ok {
 		itemSchema := sr.convertToSpecSchema(items)
 		schema.Items = &itemSchema
 	}
-	
+
 	if additionalProps, ok := schemaMap["additionalProperties"].(map[string]interface{}); ok {
 		additionalSchema := sr.convertToSpecSchema(additionalProps)
 		schema.AdditionalProperties = &additionalSchema

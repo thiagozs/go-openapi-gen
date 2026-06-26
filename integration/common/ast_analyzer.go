@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/zainokta/openapi-gen/analyzer"
+	"github.com/thiagozs/go-openapi-gen/analyzer"
 )
 
 // ASTAnalyzer provides utilities for AST-based handler analysis
@@ -167,7 +167,7 @@ func (a *ASTAnalyzer) GetModuleFromRuntimeCaller() string {
 
 		fullName := fn.Name()
 		// Skip functions from our own package
-		if strings.Contains(fullName, "github.com/openapi-gen/openapi-gen") {
+		if strings.Contains(fullName, "github.com/thiagozs/go-openapi-gen") {
 			continue
 		}
 

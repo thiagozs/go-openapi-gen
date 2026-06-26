@@ -1,4 +1,4 @@
-module github.com/zainokta/openapi-gen
+module github.com/thiagozs/go-openapi-gen
 
 go 1.25.1
 

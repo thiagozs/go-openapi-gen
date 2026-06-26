@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zainokta/openapi-gen/spec"
+	"github.com/thiagozs/go-openapi-gen/spec"
 )
 
 // SchemaGenerator generates OpenAPI schemas from Go types using reflection

@@ -14,10 +14,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zainokta/openapi-gen/analyzer"
-	"github.com/zainokta/openapi-gen/integration/common"
-	openapiParser "github.com/zainokta/openapi-gen/parser"
-	"github.com/zainokta/openapi-gen/spec"
+	"github.com/thiagozs/go-openapi-gen/analyzer"
+	"github.com/thiagozs/go-openapi-gen/integration/common"
+	openapiParser "github.com/thiagozs/go-openapi-gen/parser"
+	"github.com/thiagozs/go-openapi-gen/spec"
 )
 
 // GinRouteDiscoverer implements RouteDiscoverer for Gin

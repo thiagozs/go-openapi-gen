@@ -1,9 +1,9 @@
 package openapi
 
 import (
-	"maps"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
 	"strings"
@@ -11,11 +11,11 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"github.com/zainokta/openapi-gen/analyzer"
-	"github.com/zainokta/openapi-gen/integration"
-	"github.com/zainokta/openapi-gen/logger"
-	"github.com/zainokta/openapi-gen/parser"
-	"github.com/zainokta/openapi-gen/spec"
+	"github.com/thiagozs/go-openapi-gen/analyzer"
+	"github.com/thiagozs/go-openapi-gen/integration"
+	"github.com/thiagozs/go-openapi-gen/logger"
+	"github.com/thiagozs/go-openapi-gen/parser"
+	"github.com/thiagozs/go-openapi-gen/spec"
 )
 
 // Generator is the main OpenAPI specification generator
@@ -217,8 +217,8 @@ func (g *Generator) tryFallbackSchemaMatching(route spec.RouteInfo) analyzer.Han
 	// Strategy 1: Try with generated path-based handler name
 	pathBasedName := g.pathParser.GenerateHandlerName(route.Method, route.Path)
 	if preRegisteredSchema, exists := g.schemaRegistry.GetHandlerSchema(pathBasedName); exists {
-		g.logger.Info("Using pre-registered schema with path-based matching", 
-			"original_handler", route.HandlerName, 
+		g.logger.Info("Using pre-registered schema with path-based matching",
+			"original_handler", route.HandlerName,
 			"path_based_handler", pathBasedName)
 		return preRegisteredSchema
 	}
@@ -229,8 +229,8 @@ func (g *Generator) tryFallbackSchemaMatching(route spec.RouteInfo) analyzer.Han
 	for _, registeredHandler := range allHandlers {
 		if strings.ToLower(registeredHandler) == lowerHandlerName {
 			if preRegisteredSchema, exists := g.schemaRegistry.GetHandlerSchema(registeredHandler); exists {
-				g.logger.Info("Using pre-registered schema with case-insensitive matching", 
-					"original_handler", route.HandlerName, 
+				g.logger.Info("Using pre-registered schema with case-insensitive matching",
+					"original_handler", route.HandlerName,
 					"matched_handler", registeredHandler)
 				return preRegisteredSchema
 			}
@@ -242,8 +242,8 @@ func (g *Generator) tryFallbackSchemaMatching(route spec.RouteInfo) analyzer.Han
 		// Check if the route handler name contains the registered handler name
 		if strings.Contains(strings.ToLower(route.HandlerName), strings.ToLower(registeredHandler)) {
 			if preRegisteredSchema, exists := g.schemaRegistry.GetHandlerSchema(registeredHandler); exists {
-				g.logger.Info("Using pre-registered schema with partial matching", 
-					"original_handler", route.HandlerName, 
+				g.logger.Info("Using pre-registered schema with partial matching",
+					"original_handler", route.HandlerName,
 					"matched_handler", registeredHandler)
 				return preRegisteredSchema
 			}
@@ -251,8 +251,8 @@ func (g *Generator) tryFallbackSchemaMatching(route spec.RouteInfo) analyzer.Han
 		// Check if the registered handler name contains the route handler name
 		if strings.Contains(strings.ToLower(registeredHandler), strings.ToLower(route.HandlerName)) {
 			if preRegisteredSchema, exists := g.schemaRegistry.GetHandlerSchema(registeredHandler); exists {
-				g.logger.Info("Using pre-registered schema with reverse partial matching", 
-					"original_handler", route.HandlerName, 
+				g.logger.Info("Using pre-registered schema with reverse partial matching",
+					"original_handler", route.HandlerName,
 					"matched_handler", registeredHandler)
 				return preRegisteredSchema
 			}
@@ -505,19 +505,19 @@ func (g *Generator) generateOperationID(method, path string) string {
 func (g *Generator) generateSchemaReference(method, path, schemaType string) spec.Schema {
 	// Create route key same as schema registry
 	routeKey := strings.ToUpper(method) + " " + path
-	
+
 	// Generate schema name using same logic as schema registry
 	cleanKey := strings.ReplaceAll(routeKey, " ", "")
 	cleanKey = strings.ReplaceAll(cleanKey, "/", "_")
 	cleanKey = strings.ReplaceAll(cleanKey, ":", "")
-	
+
 	// Capitalize first letter
 	if len(cleanKey) > 0 {
 		cleanKey = strings.ToUpper(cleanKey[:1]) + cleanKey[1:]
 	}
-	
+
 	schemaName := cleanKey + schemaType
-	
+
 	return spec.Schema{
 		Ref: "#/components/schemas/" + schemaName,
 	}

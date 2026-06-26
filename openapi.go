@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/zainokta/openapi-gen/integration"
-	"github.com/zainokta/openapi-gen/logger"
+	"github.com/thiagozs/go-openapi-gen/integration"
+	"github.com/thiagozs/go-openapi-gen/logger"
 )
 
 // Option is a functional option for configuring OpenAPI generation
@@ -66,7 +66,7 @@ func WithSchemaDir(path string) Option {
 //	type MyLogger struct{}
 //	func (l *MyLogger) Info(msg string, args ...any) { /* implementation */ }
 //	// ... implement other methods
-//	
+//
 //	err := openapi.EnableDocs(framework, httpServer,
 //		openapi.WithLogger(&MyLogger{}),
 //	)
@@ -75,7 +75,7 @@ func WithSchemaDir(path string) Option {
 //
 //	slogLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 //	adapter := openapi.NewSlogAdapter(slogLogger)
-//	
+//
 //	err := openapi.EnableDocs(framework, httpServer,
 //		openapi.WithLogger(adapter),
 //	)
@@ -93,7 +93,7 @@ func WithLogger(l logger.Logger) Option {
 // Example:
 //
 //	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-//	
+//
 //	err := openapi.EnableDocs(framework, httpServer,
 //		openapi.WithSlogLogger(logger),
 //	)

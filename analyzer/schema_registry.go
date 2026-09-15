@@ -7,9 +7,15 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/thiagozs/go-openapi-gen/spec"
 )
+
+var generatedHandlerSchemas = struct {
+	sync.RWMutex
+	schemas map[string]HandlerSchema
+}{schemas: make(map[string]HandlerSchema)}
 
 // SchemaRegistry manages manual schema registration and overrides
 type SchemaRegistry struct {
@@ -29,7 +35,7 @@ type HandlerSchema struct {
 
 // NewSchemaRegistry creates a new schema registry
 func NewSchemaRegistry() *SchemaRegistry {
-	return &SchemaRegistry{
+	registry := &SchemaRegistry{
 		requestSchemas:  make(map[string]spec.Schema),
 		responseSchemas: make(map[string]spec.Schema),
 		typeSchemas:     make(map[reflect.Type]spec.Schema),
@@ -37,6 +43,20 @@ func NewSchemaRegistry() *SchemaRegistry {
 		handlerSchemas:  make(map[string]HandlerSchema),
 		schemaGen:       NewSchemaGenerator(),
 	}
+	generatedHandlerSchemas.RLock()
+	defer generatedHandlerSchemas.RUnlock()
+	for name, schema := range generatedHandlerSchemas.schemas {
+		registry.handlerSchemas[name] = schema
+	}
+	return registry
+}
+
+// RegisterGeneratedHandlerSchema registers a schema emitted by cmd/openapi-gen.
+// Generated packages call this function from init, before a Generator is built.
+func RegisterGeneratedHandlerSchema(name string, schema HandlerSchema) {
+	generatedHandlerSchemas.Lock()
+	defer generatedHandlerSchemas.Unlock()
+	generatedHandlerSchemas.schemas[name] = schema
 }
 
 // RegisterRequestSchema registers a request schema for a specific endpoint

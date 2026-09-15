@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/thiagozs/go-openapi-gen/integration/testfixtures"
 )
 
 // TestGinHandlerAnalyzer_NewAnalyzer tests the analyzer creation
@@ -57,6 +58,20 @@ func TestGinHandlerAnalyzer_AnalyzeHandler(t *testing.T) {
 	assert.Equal(t, schema.ResponseSchema.Type, "object")
 }
 
+func TestGinHandlerAnalyzer_AnalyzeMethodHandler(t *testing.T) {
+	analyzer := NewGinHandlerAnalyzer()
+	schema := analyzer.AnalyzeHandler((&testfixtures.PaymentHandler{}).Create)
+
+	assert.Equal(t, "object", schema.RequestSchema.Type)
+	assert.Contains(t, schema.RequestSchema.Properties, "amount")
+	assert.Contains(t, schema.RequestSchema.Properties, "currency")
+	assert.Contains(t, schema.RequestSchema.Required, "amount")
+
+	assert.Equal(t, "object", schema.ResponseSchema.Type)
+	assert.Contains(t, schema.ResponseSchema.Properties, "id")
+	assert.Contains(t, schema.ResponseSchema.Properties, "status")
+}
+
 // TestGinHandlerAnalyzer_ValidateSignature tests signature validation
 func TestGinHandlerAnalyzer_ValidateSignature(t *testing.T) {
 	analyzer := NewGinHandlerAnalyzer()
@@ -79,7 +94,7 @@ func TestGinRouteDiscoverer(t *testing.T) {
 	// Create a Gin engine
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	
+
 	// Add some test routes
 	engine.GET("/test", sampleGinHandler)
 	engine.POST("/users", sampleGinHandler)
@@ -114,7 +129,7 @@ func TestGinRouteDiscoverer(t *testing.T) {
 func TestGinServerAdapter(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	
+
 	adapter := NewGinServerAdapter(engine)
 	assert.NotNil(t, adapter, "Adapter should not be nil")
 

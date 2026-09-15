@@ -1,6 +1,6 @@
 # OpenAPI Generator for Go Web Frameworks
 
-[![Go Version](https://img.shields.io/badge/Go-%3E%3D1.25-blue)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-%3E%3D1.27-blue)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 A powerful, framework-agnostic OpenAPI documentation generator for Go web applications. Automatically generates comprehensive OpenAPI 3.0.3 specifications from your route definitions with intelligent AST analysis, Docker support, and flexible customization options. Works seamlessly as a library in any Go application with production-ready fallback mechanisms.
@@ -14,10 +14,10 @@ A powerful, framework-agnostic OpenAPI documentation generator for Go web applic
 - **⚡ High Performance**: Zero runtime cost, documentation generated at startup
 - **🔧 Options Pattern**: Clean, extensible API with functional options
 - **📊 Generic Logging**: Integrate with any logging framework
-- **🐳 Docker Ready**: Static schema files for production deployment
+- **🐳 Docker Ready**: Explicit per-route schemas when source files are unavailable
 - **📦 Library Support**: Works seamlessly as external library in any Go application
 - **🔍 AST Analysis**: Automatic request/response schema generation from handler code
-- **🏗️ go:generate Support**: Compile-time schema generation for production environments
+- **🏗️ Compile-time Schemas**: Generate Go schema registrations before production builds
 
 ## 🚀 Quick Start
 
@@ -86,6 +86,7 @@ func main() {
 ```
 
 **That's it!** Your API documentation is now available at:
+
 - **Swagger UI**: `http://localhost:8080/docs`
 - **OpenAPI Spec**: `http://localhost:8080/openapi.json`
 
@@ -109,18 +110,18 @@ func setupProduction() error {
 }
 ```
 
-### Docker Build with Schema Files
+### Docker Build with Generated Schemas
 
-Include schema files in your Docker build:
+Run code generation in the build stage; the schemas are compiled into the binary:
 
 ```dockerfile
 # Build stage
-FROM golang:1.25-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /app
 COPY . .
 RUN go mod download
 
-# Generate schema files
+# Generate zz_openapi_gen.go files
 RUN go generate ./...
 
 # Build the application
@@ -131,162 +132,116 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
-# Copy the binary AND schema files
+# Only the binary is needed
 COPY --from=builder /app/myapp .
-COPY --from=builder /app/schemas ./schemas
 
 CMD ["./myapp"]
 ```
 
-## 🏗️ go:generate Schema Generation
+## 🏗️ Production Schema Generation
 
-For production environments where source code is not available, use `go:generate` annotations to create static schema files at build time.
-
-### Adding go:generate Annotations
-
-Add annotations to your handlers to specify request and response types:
+For source-free production images, generate Go code containing the schemas before
+building the application. Add one directive to a file in each package containing
+Gin handlers:
 
 ```go
-//go:generate openapi-gen -request dto.LoginRequest -response dto.AuthResponse -handler Login .
-func (c *authController) Login(ctx context.Context, c *app.RequestContext) {
-    var req dto.LoginRequest
-    if err := c.BindAndValidate(&req); err != nil {
-        c.JSON(400, map[string]interface{}{"error": err.Error()})
-        return
-    }
-    
-    // Handler implementation
-    resp := authService.Login(&req)
-    c.JSON(200, resp)
-}
-
-//go:generate openapi-gen -response dto.UserResponse -handler GetUser .
-func (c *userController) GetUser(ctx context.Context, c *app.RequestContext) {
-    userID := c.Param("id")
-    
-    // Handler implementation
-    user := userService.GetUser(userID)
-    c.JSON(200, user)
-}
-
-//go:generate openapi-gen -request dto.CreateUserRequest -handler CreateUser .
-func (c *userController) CreateUser(ctx context.Context, c *app.RequestContext) {
-    var req dto.CreateUserRequest
-    if err := c.BindAndValidate(&req); err != nil {
-        c.JSON(400, map[string]interface{}{"error": err.Error()})
-        return
-    }
-    
-    // Handler implementation
-    user := userService.CreateUser(&req)
-    c.JSON(201, user)
-}
+//go:generate go run github.com/thiagozs/go-openapi-gen/cmd/openapi-gen
+package handlers
 ```
 
-### Generating Schema Files
+The generator finds `ShouldBind*`/`Bind*` request types and structured `JSON`
+response types, then writes `zz_openapi_gen.go`. Its `init` function registers
+the schemas before the OpenAPI `Generator` is created, so no source or external
+schema files are required in the final container.
 
-Generate static schema files using the CLI tool:
+### Generating Schema Code
+
+Generate schema code using the CLI tool:
 
 ```bash
-# Generate schemas for all annotated handlers
+# Run every directive in the project
 go generate ./...
 
-# Or use the cmd/openapi-gen tool directly
-go run ./cmd/openapi-gen -output ./schemas handlers/*.go
+# Or generate one handler package directly
+go run github.com/thiagozs/go-openapi-gen/cmd/openapi-gen ./internal/handlers
 
 # Install the tool globally
-go install ./cmd/openapi-gen
-openapi-gen -output ./schemas handlers/*.go
+go install github.com/thiagozs/go-openapi-gen/cmd/openapi-gen@latest
+openapi-gen ./internal/handlers
 ```
 
-This creates JSON schema files in the specified directory (default: `./schemas`).
+This creates `zz_openapi_gen.go` in the handler package.
 
 ### CLI Tool Features
 
 The `cmd/openapi-gen/` tool provides advanced schema generation capabilities:
 
-- **Automatic struct analysis** - Parses Go structs and generates OpenAPI/JSON schemas
+- **Automatic struct analysis** - Parses request and response structs using `go/types`
 - **JSON tag support** - Uses JSON tag names instead of Go variable names  
-- **Package root detection** - Automatically finds the package root and generates schemas there
+- **Self-contained binary** - Generated schemas are compiled into the application
 - **Type-aware generation** - Handles basic types, arrays, maps, pointers, and custom types
-- **Recursive directory search** - Finds struct definitions in subdirectories
+- **Validation tags** - Supports `validate` and Gin `binding` constraints
 
 ### CLI Options
 
 ```bash
-openapi-gen [options] <files>
+openapi-gen [options] [package-directory]
 
 Options:
-  -output string     Output directory for schema files (default "./schemas")
+  -output string     Generated Go file (default "zz_openapi_gen.go")
   -verbose           Enable verbose output
-  -request string    Request type in format package.TypeName
-  -response string   Response type in format package.TypeName
   -handler string    Handler name (auto-detected if not provided)
+  -framework string  Handler framework (currently "gin")
 ```
 
 ### Example Usage
 
 ```bash
-# Generate schemas with verbose output
-openapi-gen -verbose -output ./api-schemas handlers/*.go
+# Generate all handlers in a package
+openapi-gen -verbose ./internal/handlers
 
-# Generate specific handler schema
-openapi-gen -request dto.LoginRequest -response dto.AuthResponse -handler Login . handlers/auth.go
+# Generate only one named handler
+openapi-gen -handler Login ./internal/handlers
 
 # Generate all schemas in project
 go generate ./...
 ```
 
-### Generated Schema Format
+### Generated Code
 
-Each handler generates a JSON schema file:
+Each handler package gets a Go file that registers its schemas during package
+initialization:
 
-```json
-{
-  "handlerName": "LoginHandler",
-  "requestSchema": {
-    "type": "object",
-    "properties": {
-      "email": {"type": "string"},
-      "password": {"type": "string"}
-    },
-    "required": ["email", "password"]
-  },
-  "responseSchema": {
-    "type": "object", 
-    "properties": {
-      "access_token": {"type": "string"},
-      "refresh_token": {"type": "string"},
-      "expires_in": {"type": "integer", "format": "int64"},
-      "token_type": {"type": "string"}
-    },
-    "required": ["access_token", "refresh_token", "expires_in", "token_type"]
-  }
+```go
+// Code generated by openapi-gen. DO NOT EDIT.
+func init() {
+    openapianalyzer.RegisterGeneratedHandlerSchema(
+        "example.com/myapp/handlers.AuthHandler.Login",
+        /* generated schema */,
+    )
 }
 ```
 
-### Using Static Schemas in Production
+### Using Generated Schemas in Production
 
-Configure the generator to use static schema files:
+No runtime configuration is required. Import and register the handler package as
+usual, then build after running `go generate`:
 
 ```go
 func main() {
-    h := server.Default()
+    r := gin.Default()
+    paymentHandler := handlers.NewPaymentHandler()
     
     // Add your routes here
-    h.POST("/auth/login", authController.Login)
-    h.GET("/users/:id", userController.GetUser)
-    h.POST("/users", userController.CreateUser)
+    r.POST("/payments", paymentHandler.Create)
     
-    // Enable OpenAPI documentation with static schemas
-    err := openapi.EnableDocs(h, integration.NewHertzServerAdapter(h),
-        openapi.WithSchemaDir("./schemas"), // Directory containing generated schema files
-    )
+    // Generated schemas were registered by the handlers package init function.
+    err := openapi.EnableDocs(r, integration.NewGinServerAdapter(r))
     if err != nil {
         panic(err)
     }
     
-    h.Spin()
+    r.Run(":8080")
 }
 ```
 
@@ -406,7 +361,7 @@ err := openapi.EnableDocs(myFramework, httpServer,
 ### Example Generated Documentation
 
 | Route | Generated | Enhanced | Custom |
-|-------|-----------|----------|---------|
+| ------- | ----------- | ---------- | --------- |
 | `POST /api/v1/auth/login` | `Create Auth Login` | `User Authentication` | `Authenticate user with email and password. Returns JWT tokens.` |
 | `GET /api/v1/users/:id` | `Get Users Id` | `Get User Details` | `Retrieve user information by unique identifier` |
 
@@ -431,10 +386,12 @@ openapi.EnableDocs(framework, integration.NewHertzServerAdapter(framework),
 ## 🌐 Framework Support
 
 ### Currently Supported
+
 - ✅ **CloudWeGo Hertz** - Full auto-detection support
 - ✅ **Gin** - Full auto-detection support
 
 ### Coming Soon
+
 - 🔄 **Echo** - Interface ready, implementation planned  
 - 🔄 **Fiber** - Interface ready, implementation planned
 - 🔄 **Chi** - Interface ready, implementation planned
@@ -452,34 +409,32 @@ openapi.EnableDocs(framework, integration.NewHertzServerAdapter(framework),
 ### Common Issues
 
 #### Generic schemas in production
+
 When source files aren't available, the generator uses fallback schemas.
 
 **Solutions**:
-1. **Use go:generate annotations** (recommended):
+
+1. **Use explicit route schema overrides** (currently supported):
+
    ```go
-   // Add annotations to your handlers
-   //go:generate openapi-gen -request dto.CreateUserRequest -response dto.UserResponse -handler CreateUser .
-   func (c *userController) CreateUser(ctx context.Context, c *app.RequestContext) {
-       // Handler implementation
-   }
-   
-   // Generate schema files
-   go generate ./...
-   
-   // Use static schemas in production
-   openapi.WithSchemaDir("./schemas")
+   schema := spec.Schema{Type: "object", Properties: map[string]spec.Schema{
+       "amount": {Type: "number"},
+   }}
+   generator.GetOverrideManager().Override("POST", "/payments", openapi.RouteMetadata{
+       RequestSchema: &schema,
+   })
    ```
 
-2. **Include schema files in Docker builds**:
+2. **Generate schemas into the binary** before the application build:
+
    ```dockerfile
    # Build stage
-   FROM golang:1.25-alpine AS builder
+   FROM golang:1.27-alpine AS builder
    WORKDIR /app
    COPY . .
    RUN go mod download
    
-   # Install and run the schema generator
-   RUN go install ./cmd/openapi-gen
+   # Run //go:generate directives that create zz_openapi_gen.go
    RUN go generate ./...
    
    # Build the application
@@ -488,11 +443,11 @@ When source files aren't available, the generator uses fallback schemas.
    # Production stage
    FROM alpine:latest
    COPY --from=builder /app/myapp .
-   COPY --from=builder /app/schemas ./schemas
    CMD ["./myapp"]
    ```
 
 #### Import path issues when using as library
+
 Make sure to use the correct import paths:
 
 ```go
@@ -518,10 +473,11 @@ OPENAPI_SCHEMA_DIR=./schemas    # Set schema files directory
 We welcome contributions! Please see our contributing guidelines for details.
 
 ### TODO Roadmap
-- [x] **Docker and Production Support** - Complete with static schema files and go:generate
+
+- [x] **Docker and Production Support** - Explicit route schema overrides
 - [x] **Library Usage Improvements** - Cross-package AST analysis and configuration options  
 - [x] **AST-based Schema Generation** - Automatic request/response schema extraction
-- [x] **go:generate Schema Generation** - Compile-time schema generation for production
+- [x] **go:generate Schema Generation** - Compile-time schema generation CLI for Gin
 - [x] **Gin Framework Support** - Complete integration with Gin framework
 - [ ] Additional framework integrations (Echo, Fiber, Chi)
 - [ ] Plugin system for custom analyzers
@@ -536,6 +492,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 Built with ❤️ using:
+
 - [CloudWeGo Hertz](https://github.com/cloudwego/hertz) - High-performance Go HTTP framework
 - [Swagger UI](https://swagger.io/tools/swagger-ui/) - Interactive API documentation
 

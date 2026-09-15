@@ -52,7 +52,13 @@ func NewGenerator(framework any, httpServer integration.HTTPServer, options *Opt
 	overrideManager := NewOverrideManager()
 	structParser := parser.NewStructParser()
 	schemaRegistry := analyzer.NewSchemaRegistry()
-	handlerAnalyzer := integration.NewHertzHandlerAnalyzer()
+	var handlerAnalyzer analyzer.HandlerAnalyzer
+	switch strings.ToLower(discoverer.GetFrameworkName()) {
+	case "gin":
+		handlerAnalyzer = integration.NewGinHandlerAnalyzer()
+	default:
+		handlerAnalyzer = integration.NewHertzHandlerAnalyzer()
+	}
 
 	// Configure the handler analyzer based on config settings
 	if options.config != nil {
@@ -167,9 +173,17 @@ func (g *Generator) GenerateSpec() (*spec.OpenAPISpec, error) {
 // processRoute processes a single route and adds it to the OpenAPI spec
 func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) error {
 	var handlerSchema analyzer.HandlerSchema
+	parsed := g.pathParser.ParseRoute(route.Method, route.Path)
+	metadata := g.overrideManager.GetMetadata(route.Method, route.Path, parsed)
 
 	// First, try to get pre-registered schema by handler name
-	if route.HandlerName != "" {
+	if route.HandlerID != "" {
+		if preRegisteredSchema, exists := g.schemaRegistry.GetHandlerSchema(route.HandlerID); exists {
+			handlerSchema = preRegisteredSchema
+			g.logger.Info("Using generated schema", "handler", route.HandlerID)
+		}
+	}
+	if !schemaIsSet(handlerSchema.RequestSchema) && !schemaIsSet(handlerSchema.ResponseSchema) && route.HandlerName != "" {
 		if preRegisteredSchema, exists := g.schemaRegistry.GetHandlerSchema(route.HandlerName); exists {
 			handlerSchema = preRegisteredSchema
 			g.logger.Info("Using pre-registered schema", "handler", route.HandlerName)
@@ -180,23 +194,24 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 	}
 
 	// If no pre-registered schema found, try to analyze the handler
-	if (handlerSchema.RequestSchema.Type == "" && handlerSchema.ResponseSchema.Type == "") && route.Handler != nil {
+	if !schemaIsSet(handlerSchema.RequestSchema) && !schemaIsSet(handlerSchema.ResponseSchema) && route.Handler != nil {
 		handlerSchema = g.handlerAnalyzer.AnalyzeHandler(route.Handler)
 	}
 
+	if metadata.RequestSchema != nil {
+		handlerSchema.RequestSchema = *metadata.RequestSchema
+	}
+	if metadata.ResponseSchema != nil {
+		handlerSchema.ResponseSchema = *metadata.ResponseSchema
+	}
+
 	// Register the discovered schemas with the schema registry
-	if handlerSchema.RequestSchema.Type != "" {
+	if schemaIsSet(handlerSchema.RequestSchema) {
 		g.schemaRegistry.RegisterRequestSchema(route.Method, route.Path, handlerSchema.RequestSchema)
 	}
-	if handlerSchema.ResponseSchema.Type != "" {
+	if schemaIsSet(handlerSchema.ResponseSchema) {
 		g.schemaRegistry.RegisterResponseSchema(route.Method, route.Path, handlerSchema.ResponseSchema)
 	}
-
-	// Parse route using algorithm
-	parsed := g.pathParser.ParseRoute(route.Method, route.Path)
-
-	// Apply overrides
-	metadata := g.overrideManager.GetMetadata(route.Method, route.Path, parsed)
 
 	// Collect tags
 	tags[metadata.Tags] = true
@@ -208,6 +223,11 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 	g.addOperationToSpec(route.Method, route.Path, operation)
 
 	return nil
+}
+
+func schemaIsSet(schema spec.Schema) bool {
+	return schema.Type != "" || schema.Ref != "" || len(schema.AllOf) > 0 ||
+		len(schema.OneOf) > 0 || len(schema.AnyOf) > 0
 }
 
 // tryFallbackSchemaMatching attempts to match schemas using fallback strategies

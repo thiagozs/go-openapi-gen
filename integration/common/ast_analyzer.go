@@ -85,8 +85,15 @@ func (a *ASTAnalyzer) FindSourceFileInConsumerModule(pkgPath string) string {
 		return ""
 	}
 
-	// Get the consuming application's module name
-	consumerModule := a.GetCurrentModuleName()
+	moduleRoot := wd
+	consumerModule := ""
+	if goModPath := a.FindGoModPath(wd); goModPath != "" {
+		moduleRoot = filepath.Dir(goModPath)
+		consumerModule = a.GetModuleNameFromGoMod(goModPath)
+	}
+	if consumerModule == "" {
+		consumerModule = a.GetCurrentModuleName()
+	}
 	if consumerModule == "" {
 		return ""
 	}
@@ -104,7 +111,7 @@ func (a *ASTAnalyzer) FindSourceFileInConsumerModule(pkgPath string) string {
 	}
 
 	// Convert package path to file system path
-	pkgDir := filepath.Join(wd, filepath.FromSlash(relativePkgPath))
+	pkgDir := filepath.Join(moduleRoot, filepath.FromSlash(relativePkgPath))
 
 	// Strategy 1: Look for .go files in the exact package directory
 	if sourceFile := a.FindGoFilesInDirectory(pkgDir); sourceFile != "" {
@@ -113,11 +120,11 @@ func (a *ASTAnalyzer) FindSourceFileInConsumerModule(pkgPath string) string {
 
 	// Strategy 2: Try common handler directory patterns
 	commonPatterns := []string{
-		filepath.Join(wd, "handlers"),
-		filepath.Join(wd, "internal", "handlers"),
-		filepath.Join(wd, "pkg", "handlers"),
-		filepath.Join(wd, "api", "handlers"),
-		filepath.Join(wd, "internal", "api", "handlers"),
+		filepath.Join(moduleRoot, "handlers"),
+		filepath.Join(moduleRoot, "internal", "handlers"),
+		filepath.Join(moduleRoot, "pkg", "handlers"),
+		filepath.Join(moduleRoot, "api", "handlers"),
+		filepath.Join(moduleRoot, "internal", "api", "handlers"),
 	}
 
 	for _, pattern := range commonPatterns {

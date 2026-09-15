@@ -2,15 +2,18 @@ package openapi
 
 import (
 	"github.com/thiagozs/go-openapi-gen/parser"
+	"github.com/thiagozs/go-openapi-gen/spec"
 	"regexp"
 	"strings"
 )
 
 // RouteMetadata represents custom metadata for routes
 type RouteMetadata struct {
-	Tags        string `json:"tags,omitempty"`
-	Summary     string `json:"summary,omitempty"`
-	Description string `json:"description,omitempty"`
+	Tags           string       `json:"tags,omitempty"`
+	Summary        string       `json:"summary,omitempty"`
+	Description    string       `json:"description,omitempty"`
+	RequestSchema  *spec.Schema `json:"requestSchema,omitempty"`
+	ResponseSchema *spec.Schema `json:"responseSchema,omitempty"`
 }
 
 // OverrideManager manages custom metadata overrides
@@ -121,6 +124,12 @@ func (om *OverrideManager) mergeMetadata(result *RouteMetadata, override RouteMe
 	}
 	if override.Description != "" {
 		result.Description = override.Description
+	}
+	if override.RequestSchema != nil {
+		result.RequestSchema = override.RequestSchema
+	}
+	if override.ResponseSchema != nil {
+		result.ResponseSchema = override.ResponseSchema
 	}
 }
 

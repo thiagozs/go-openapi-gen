@@ -5,12 +5,14 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/thiagozs/go-openapi-gen/integration/common"
 	openapiParser "github.com/thiagozs/go-openapi-gen/parser"
 	"github.com/thiagozs/go-openapi-gen/spec"
+	"golang.org/x/tools/go/packages"
 )
 
 // GinRouteDiscoverer implements RouteDiscoverer for Gin
@@ -46,6 +49,7 @@ func (g *GinRouteDiscoverer) DiscoverRoutes() ([]spec.RouteInfo, error) {
 			Method:      route.Method,
 			Path:        route.Path,
 			HandlerName: g.extractHandlerName(route),
+			HandlerID:   g.extractHandlerID(route),
 			Handler:     route.HandlerFunc,
 		}
 
@@ -53,6 +57,21 @@ func (g *GinRouteDiscoverer) DiscoverRoutes() ([]spec.RouteInfo, error) {
 	}
 
 	return routes, nil
+}
+
+func (g *GinRouteDiscoverer) extractHandlerID(route gin.RouteInfo) string {
+	if route.HandlerFunc == nil {
+		return ""
+	}
+	value := reflect.ValueOf(route.HandlerFunc)
+	if !value.IsValid() || value.Kind() != reflect.Func || value.Pointer() == 0 {
+		return ""
+	}
+	fn := runtime.FuncForPC(value.Pointer())
+	if fn == nil {
+		return ""
+	}
+	return analyzer.NormalizeHandlerID(fn.Name())
 }
 
 // extractHandlerName extracts handler name from Gin route info
@@ -172,6 +191,8 @@ type GinHandlerAnalyzer struct {
 	schemaAnalyzer       *common.SchemaAnalyzer
 	sourceFilePath       string      // Path to the source file being analyzed
 	config               interface{} // Configuration passed from library consumer
+	packageMu            sync.Mutex
+	packageCache         map[string][]*packages.Package
 }
 
 // NewGinHandlerAnalyzer creates a new Gin handler analyzer
@@ -181,6 +202,7 @@ func NewGinHandlerAnalyzer() *GinHandlerAnalyzer {
 		astAnalyzer:          common.NewASTAnalyzer(),
 		typeResolver:         common.NewTypeResolver(),
 		schemaAnalyzer:       common.NewSchemaAnalyzer(),
+		packageCache:         make(map[string][]*packages.Package),
 	}
 }
 
@@ -247,6 +269,14 @@ func (g *GinHandlerAnalyzer) ExtractTypes(handler interface{}) (requestType, res
 
 // AnalyzeHandler analyzes handler and returns schemas with Docker-compatible fallbacks
 func (g *GinHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.HandlerSchema {
+	handlerValue := reflect.ValueOf(handler)
+	if handlerValue.IsValid() && handlerValue.Kind() == reflect.Func &&
+		g.isASTAnalysisEnabled() && !g.isProductionMode() {
+		if astSchema := g.analyzeHandlerSource(handlerValue); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" {
+			return astSchema
+		}
+	}
+
 	// First, try to analyze using reflection
 	reqType, respType, err := g.ExtractTypes(handler)
 
@@ -272,6 +302,181 @@ func (g *GinHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Handle
 
 	// Final fallback: Generate generic schemas for Docker/production environments
 	return g.schemaAnalyzer.GenerateFallbackSchemas()
+}
+
+// analyzeHandlerSource type-checks the package containing a handler and uses
+// go/types to resolve local as well as imported request and response types.
+func (g *GinHandlerAnalyzer) analyzeHandlerSource(handlerValue reflect.Value) analyzer.HandlerSchema {
+	var schema analyzer.HandlerSchema
+	pc := handlerValue.Pointer()
+	fn := runtime.FuncForPC(pc)
+	if fn == nil {
+		return schema
+	}
+
+	sourceFile, _ := fn.FileLine(pc)
+	matchExactFile := true
+	if sourceFile == "" || strings.HasPrefix(sourceFile, "<") {
+		sourceFile = g.astAnalyzer.FindHandlerSourceFile(fn.Name())
+		matchExactFile = false
+	} else if _, err := os.Stat(sourceFile); err != nil {
+		sourceFile = g.astAnalyzer.FindHandlerSourceFile(fn.Name())
+		matchExactFile = false
+	}
+	if sourceFile == "" {
+		return schema
+	}
+
+	pkgs, err := g.loadTypedPackages(filepath.Dir(sourceFile))
+	if err != nil || len(pkgs) == 0 {
+		return schema
+	}
+
+	methodName := g.handlerNameExtractor.ParseHandlerNameFromFunction(fn.Name())
+	receiverName := receiverNameFromRuntime(fn.Name())
+	for _, pkg := range pkgs {
+		for i, file := range pkg.Syntax {
+			if matchExactFile && i < len(pkg.CompiledGoFiles) && !sameFile(pkg.CompiledGoFiles[i], sourceFile) {
+				continue
+			}
+			decl := findTypedHandlerDecl(file, methodName, receiverName)
+			if decl == nil {
+				continue
+			}
+			return g.schemasFromTypedHandler(decl, pkg.TypesInfo)
+		}
+	}
+
+	return schema
+}
+
+func (g *GinHandlerAnalyzer) loadTypedPackages(dir string) ([]*packages.Package, error) {
+	g.packageMu.Lock()
+	defer g.packageMu.Unlock()
+	if cached, ok := g.packageCache[dir]; ok {
+		return cached, nil
+	}
+
+	cfg := &packages.Config{
+		Dir: dir,
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
+			packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
+	}
+	pkgs, err := packages.Load(cfg, ".")
+	if err == nil {
+		g.packageCache[dir] = pkgs
+	}
+	return pkgs, err
+}
+
+func (g *GinHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *types.Info) analyzer.HandlerSchema {
+	var schema analyzer.HandlerSchema
+	var responseType types.Type
+	bestResponseScore := -1
+
+	ast.Inspect(decl.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		if schema.RequestSchema.Type == "" && g.isShouldBindCall(call) && len(call.Args) > 0 {
+			if requestType := info.TypeOf(call.Args[0]); requestType != nil {
+				schema.RequestSchema = g.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoType(requestType)
+			}
+		}
+
+		if g.isJSONCall(call) && len(call.Args) >= 2 {
+			candidate := info.TypeOf(call.Args[1])
+			if score := responseTypeScore(candidate); score > bestResponseScore {
+				responseType = candidate
+				bestResponseScore = score
+			}
+		}
+		return true
+	})
+
+	if responseType != nil {
+		schema.ResponseSchema = g.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoType(responseType)
+	}
+	return schema
+}
+
+func findTypedHandlerDecl(file *ast.File, methodName, receiverName string) *ast.FuncDecl {
+	var nameOnlyMatch *ast.FuncDecl
+	for _, declaration := range file.Decls {
+		decl, ok := declaration.(*ast.FuncDecl)
+		if !ok || decl.Name.Name != methodName {
+			continue
+		}
+		nameOnlyMatch = decl
+		if receiverName == "" || receiverNameFromDecl(decl) == receiverName {
+			return decl
+		}
+	}
+	return nameOnlyMatch
+}
+
+func receiverNameFromRuntime(name string) string {
+	start := strings.LastIndex(name, ".(")
+	end := strings.LastIndex(name, ").")
+	if start == -1 || end <= start+2 {
+		return ""
+	}
+	return strings.TrimPrefix(name[start+2:end], "*")
+}
+
+func receiverNameFromDecl(decl *ast.FuncDecl) string {
+	if decl.Recv == nil || len(decl.Recv.List) == 0 {
+		return ""
+	}
+	expr := decl.Recv.List[0].Type
+	if pointer, ok := expr.(*ast.StarExpr); ok {
+		expr = pointer.X
+	}
+	if ident, ok := expr.(*ast.Ident); ok {
+		return ident.Name
+	}
+	return ""
+}
+
+func sameFile(left, right string) bool {
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	return leftErr == nil && rightErr == nil && leftAbs == rightAbs
+}
+
+func responseTypeScore(t types.Type) int {
+	if t == nil {
+		return -1
+	}
+	for {
+		switch typed := t.(type) {
+		case *types.Pointer:
+			t = typed.Elem()
+		case *types.Alias:
+			t = types.Unalias(typed)
+		default:
+			goto scored
+		}
+	}
+
+scored:
+	switch typed := t.(type) {
+	case *types.Named:
+		if _, ok := typed.Underlying().(*types.Struct); ok {
+			return 4
+		}
+		return 3
+	case *types.Struct:
+		return 3
+	case *types.Slice, *types.Array:
+		return 2
+	case *types.Map:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // areSourceFilesAvailable checks if Go source files are available (not in Docker/production)
@@ -467,14 +672,7 @@ func (g *GinHandlerAnalyzer) inferTypesFromContext(handlerValue reflect.Value) (
 
 // findFunctionDecl finds the function declaration by name
 func (g *GinHandlerAnalyzer) findFunctionDecl(file *ast.File, funcName string) *ast.FuncDecl {
-	// Extract the simple function name (remove package prefix)
-	parts := strings.Split(funcName, ".")
-	simpleName := parts[len(parts)-1]
-
-	// Remove any receiver information from method names
-	if idx := strings.LastIndex(simpleName, "-"); idx != -1 {
-		simpleName = simpleName[idx+1:]
-	}
+	simpleName := g.handlerNameExtractor.ParseHandlerNameFromFunction(funcName)
 
 	for _, decl := range file.Decls {
 		if funcDecl, ok := decl.(*ast.FuncDecl); ok {

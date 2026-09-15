@@ -238,6 +238,7 @@ type Callback map[string]PathItem
 type RouteInfo struct {
 	Method       string
 	Path         string
+	HandlerID    string
 	HandlerName  string
 	Handler      interface{}
 	RequestType  interface{}

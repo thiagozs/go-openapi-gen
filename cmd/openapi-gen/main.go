@@ -49,7 +49,7 @@ func run(args []string) error {
 	opts := options{}
 	flags.StringVar(&opts.output, "output", defaultOutput, "generated Go file")
 	flags.StringVar(&opts.handler, "handler", "", "generate only the named handler")
-	flags.StringVar(&opts.framework, "framework", "gin", "handler framework (currently gin)")
+	flags.StringVar(&opts.framework, "framework", "gin", "handler framework (gin or hertz)")
 	flags.BoolVar(&opts.verbose, "verbose", false, "print analyzed handlers")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -57,8 +57,8 @@ func run(args []string) error {
 	if flags.NArg() > 1 {
 		return errors.New("expected at most one package directory")
 	}
-	if opts.framework != "gin" {
-		return fmt.Errorf("unsupported framework %q: only gin is currently supported", opts.framework)
+	if opts.framework != "gin" && opts.framework != "hertz" {
+		return fmt.Errorf("unsupported framework %q: expected gin or hertz", opts.framework)
 	}
 	opts.dir = "."
 	if flags.NArg() == 1 {
@@ -73,7 +73,7 @@ func run(args []string) error {
 		if opts.handler != "" {
 			return fmt.Errorf("handler %q was not found or has no detectable schema", opts.handler)
 		}
-		return errors.New("no Gin handlers with detectable request or response schemas found")
+		return fmt.Errorf("no %s handlers with detectable request or response schemas found", opts.framework)
 	}
 
 	content, err := renderGeneratedFile(pkgName, handlers)
@@ -127,10 +127,10 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 			if !ok || decl.Body == nil || (opts.handler != "" && decl.Name.Name != opts.handler) {
 				continue
 			}
-			if !isGinHandler(decl, pkg.TypesInfo) {
+			if !isFrameworkHandler(decl, pkg.TypesInfo, opts.framework) {
 				continue
 			}
-			requestType, responseType := typesFromGinHandler(decl, pkg.TypesInfo)
+			requestType, responseType := typesFromHandler(decl, pkg.TypesInfo, opts.framework)
 			handler := generatedHandler{name: decl.Name.Name, id: declarationHandlerID(pkg.PkgPath, decl)}
 			if requestType != nil {
 				handler.request = schemaGenerator.GenerateSchemaFromGoType(requestType)
@@ -170,6 +170,17 @@ func declarationHandlerID(packagePath string, decl *ast.FuncDecl) string {
 	return packagePath + "." + decl.Name.Name
 }
 
+func isFrameworkHandler(decl *ast.FuncDecl, info *types.Info, framework string) bool {
+	switch framework {
+	case "gin":
+		return isGinHandler(decl, info)
+	case "hertz":
+		return isHertzHandler(decl, info)
+	default:
+		return false
+	}
+}
+
 func isGinHandler(decl *ast.FuncDecl, info *types.Info) bool {
 	object := info.Defs[decl.Name]
 	if object == nil {
@@ -189,7 +200,33 @@ func isGinHandler(decl *ast.FuncDecl, info *types.Info) bool {
 		named.Obj().Pkg().Path() == "github.com/gin-gonic/gin" && named.Obj().Name() == "Context"
 }
 
-func typesFromGinHandler(decl *ast.FuncDecl, info *types.Info) (types.Type, types.Type) {
+func isHertzHandler(decl *ast.FuncDecl, info *types.Info) bool {
+	object := info.Defs[decl.Name]
+	if object == nil {
+		return false
+	}
+	signature, ok := object.Type().(*types.Signature)
+	if !ok || signature.Params().Len() != 2 || signature.Results().Len() != 0 {
+		return false
+	}
+	contextType := signature.Params().At(0).Type()
+	contextNamed, ok := contextType.(*types.Named)
+	if !ok || contextNamed.Obj().Pkg() == nil ||
+		contextNamed.Obj().Pkg().Path() != "context" || contextNamed.Obj().Name() != "Context" {
+		return false
+	}
+	requestContext := signature.Params().At(1).Type()
+	pointer, ok := requestContext.(*types.Pointer)
+	if !ok {
+		return false
+	}
+	named, ok := pointer.Elem().(*types.Named)
+	return ok && named.Obj().Pkg() != nil &&
+		named.Obj().Pkg().Path() == "github.com/cloudwego/hertz/pkg/app" &&
+		named.Obj().Name() == "RequestContext"
+}
+
+func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string) (types.Type, types.Type) {
 	var requestType types.Type
 	var responseType types.Type
 	bestResponseScore := -1
@@ -202,7 +239,7 @@ func typesFromGinHandler(decl *ast.FuncDecl, info *types.Info) (types.Type, type
 		if !ok {
 			return true
 		}
-		if requestType == nil && isBindMethod(selector.Sel.Name) && len(call.Args) > 0 {
+		if requestType == nil && isBindMethod(selector.Sel.Name, framework) && len(call.Args) > 0 {
 			requestType = info.TypeOf(call.Args[0])
 		}
 		if isJSONMethod(selector.Sel.Name) && len(call.Args) >= 2 {
@@ -217,7 +254,10 @@ func typesFromGinHandler(decl *ast.FuncDecl, info *types.Info) (types.Type, type
 	return requestType, responseType
 }
 
-func isBindMethod(name string) bool {
+func isBindMethod(name, framework string) bool {
+	if framework == "hertz" {
+		return name == "BindAndValidate"
+	}
 	switch name {
 	case "ShouldBind", "ShouldBindJSON", "ShouldBindXML", "ShouldBindQuery", "ShouldBindUri",
 		"ShouldBindHeader", "ShouldBindYAML", "ShouldBindTOML", "Bind", "BindJSON", "BindXML",

@@ -6,12 +6,14 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
@@ -21,6 +23,7 @@ import (
 	"github.com/thiagozs/go-openapi-gen/integration/common"
 	openapiParser "github.com/thiagozs/go-openapi-gen/parser"
 	"github.com/thiagozs/go-openapi-gen/spec"
+	"golang.org/x/tools/go/packages"
 )
 
 // HertzRouteDiscoverer implements RouteDiscoverer for CloudWeGo Hertz
@@ -49,6 +52,7 @@ func (h *HertzRouteDiscoverer) DiscoverRoutes() ([]spec.RouteInfo, error) {
 			Method:      route.Method,
 			Path:        route.Path,
 			HandlerName: h.extractHandlerName(route),
+			HandlerID:   h.extractHandlerID(route),
 			Handler:     route.HandlerFunc,
 		}
 
@@ -56,6 +60,21 @@ func (h *HertzRouteDiscoverer) DiscoverRoutes() ([]spec.RouteInfo, error) {
 	}
 
 	return routes, nil
+}
+
+func (h *HertzRouteDiscoverer) extractHandlerID(route route.RouteInfo) string {
+	if route.HandlerFunc == nil {
+		return ""
+	}
+	value := reflect.ValueOf(route.HandlerFunc)
+	if !value.IsValid() || value.Kind() != reflect.Func || value.Pointer() == 0 {
+		return ""
+	}
+	fn := runtime.FuncForPC(value.Pointer())
+	if fn == nil {
+		return ""
+	}
+	return analyzer.NormalizeHandlerID(fn.Name())
 }
 
 // extractHandlerName extracts handler name from Hertz route info
@@ -184,6 +203,8 @@ type HertzHandlerAnalyzer struct {
 	schemaAnalyzer       *common.SchemaAnalyzer
 	sourceFilePath       string      // Path to the source file being analyzed
 	config               interface{} // Configuration passed from library consumer
+	packageMu            sync.Mutex
+	packageCache         map[string][]*packages.Package
 }
 
 // NewHertzHandlerAnalyzer creates a new Hertz handler analyzer
@@ -193,6 +214,7 @@ func NewHertzHandlerAnalyzer() *HertzHandlerAnalyzer {
 		astAnalyzer:          common.NewASTAnalyzer(),
 		typeResolver:         common.NewTypeResolver(),
 		schemaAnalyzer:       common.NewSchemaAnalyzer(),
+		packageCache:         make(map[string][]*packages.Package),
 	}
 }
 
@@ -259,6 +281,14 @@ func (h *HertzHandlerAnalyzer) ExtractTypes(handler interface{}) (requestType, r
 
 // AnalyzeHandler analyzes handler and returns schemas with Docker-compatible fallbacks
 func (h *HertzHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.HandlerSchema {
+	handlerValue := reflect.ValueOf(handler)
+	if handlerValue.IsValid() && handlerValue.Kind() == reflect.Func &&
+		h.isASTAnalysisEnabled() && !h.isProductionMode() {
+		if astSchema := h.analyzeHandlerSource(handlerValue); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" {
+			return astSchema
+		}
+	}
+
 	// First, try to analyze using reflection
 	reqType, respType, err := h.ExtractTypes(handler)
 
@@ -284,6 +314,104 @@ func (h *HertzHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Hand
 
 	// Final fallback: Generate generic schemas for Docker/production environments
 	return h.schemaAnalyzer.GenerateFallbackSchemas()
+}
+
+// analyzeHandlerSource type-checks the package containing a handler and uses
+// go/types to resolve local as well as imported request and response types.
+func (h *HertzHandlerAnalyzer) analyzeHandlerSource(handlerValue reflect.Value) analyzer.HandlerSchema {
+	var schema analyzer.HandlerSchema
+	pc := handlerValue.Pointer()
+	fn := runtime.FuncForPC(pc)
+	if fn == nil {
+		return schema
+	}
+
+	sourceFile, _ := fn.FileLine(pc)
+	matchExactFile := true
+	if sourceFile == "" || strings.HasPrefix(sourceFile, "<") {
+		sourceFile = h.astAnalyzer.FindHandlerSourceFile(fn.Name())
+		matchExactFile = false
+	} else if _, err := os.Stat(sourceFile); err != nil {
+		sourceFile = h.astAnalyzer.FindHandlerSourceFile(fn.Name())
+		matchExactFile = false
+	}
+	if sourceFile == "" {
+		return schema
+	}
+
+	pkgs, err := h.loadTypedPackages(filepath.Dir(sourceFile))
+	if err != nil || len(pkgs) == 0 {
+		return schema
+	}
+
+	methodName := h.handlerNameExtractor.ParseHandlerNameFromFunction(fn.Name())
+	receiverName := receiverNameFromRuntime(fn.Name())
+	for _, pkg := range pkgs {
+		for i, file := range pkg.Syntax {
+			if matchExactFile && i < len(pkg.CompiledGoFiles) && !sameFile(pkg.CompiledGoFiles[i], sourceFile) {
+				continue
+			}
+			decl := findTypedHandlerDecl(file, methodName, receiverName)
+			if decl == nil {
+				continue
+			}
+			return h.schemasFromTypedHandler(decl, pkg.TypesInfo)
+		}
+	}
+
+	return schema
+}
+
+func (h *HertzHandlerAnalyzer) loadTypedPackages(dir string) ([]*packages.Package, error) {
+	h.packageMu.Lock()
+	defer h.packageMu.Unlock()
+	if cached, ok := h.packageCache[dir]; ok {
+		return cached, nil
+	}
+
+	cfg := &packages.Config{
+		Dir: dir,
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
+			packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
+	}
+	pkgs, err := packages.Load(cfg, ".")
+	if err == nil {
+		h.packageCache[dir] = pkgs
+	}
+	return pkgs, err
+}
+
+func (h *HertzHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *types.Info) analyzer.HandlerSchema {
+	var schema analyzer.HandlerSchema
+	var responseType types.Type
+	bestResponseScore := -1
+
+	ast.Inspect(decl.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		if schema.RequestSchema.Type == "" && h.isBindAndValidateCall(call) && len(call.Args) > 0 {
+			if requestType := info.TypeOf(call.Args[0]); requestType != nil {
+				schema.RequestSchema = h.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoType(requestType)
+			}
+		}
+
+		if h.isJSONCall(call) && len(call.Args) >= 2 {
+			candidate := info.TypeOf(call.Args[1])
+			if score := responseTypeScore(candidate); score > bestResponseScore {
+				responseType = candidate
+				bestResponseScore = score
+			}
+		}
+		return true
+	})
+
+	if responseType != nil {
+		schema.ResponseSchema = h.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoType(responseType)
+	}
+	return schema
 }
 
 // areSourceFilesAvailable checks if Go source files are available (not in Docker/production)
@@ -486,7 +614,7 @@ func (h *HertzHandlerAnalyzer) extractResponseType(funcDecl *ast.FuncDecl) refle
 			if h.isJSONCall(callExpr) {
 				// Extract the type from the second argument (response data)
 				if len(callExpr.Args) >= 2 {
-					resolvedType := h.astAnalyzer.ExtractTypeFromCallExpr(callExpr)
+					resolvedType := h.astAnalyzer.ExtractTypeFromCallArg(callExpr, 1)
 					if resolvedType != nil {
 						responseType = resolvedType
 						return false // Stop walking once we find a concrete type

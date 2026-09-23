@@ -42,7 +42,7 @@ func (sa *SchemaAnalyzer) GenerateFallbackSchemas() analyzer.HandlerSchema {
 			"data": {
 				Type:                 "object",
 				Description:          "Request payload (schema analysis unavailable in production mode)",
-				AdditionalProperties: &spec.Schema{Type: "any"},
+				AdditionalProperties: &spec.Schema{},
 			},
 		},
 		Description: "Generic request schema - AST analysis not available",
@@ -55,7 +55,7 @@ func (sa *SchemaAnalyzer) GenerateFallbackSchemas() analyzer.HandlerSchema {
 			"data": {
 				Type:                 "object",
 				Description:          "Response data",
-				AdditionalProperties: &spec.Schema{Type: "any"},
+				AdditionalProperties: &spec.Schema{},
 			},
 			"message": {
 				Type:        "string",

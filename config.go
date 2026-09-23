@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"fmt"
+	"strings"
 )
 
 // Config represents the configuration for the OpenAPI generator
@@ -15,9 +16,9 @@ type Config struct {
 	Contact     Contact `json:"contact,omitempty"`
 
 	// Schema directory configuration
-	SchemaDir   string  `json:"schema_dir,omitempty"`         // Path to generated schema files
+	SchemaDir          string `json:"schema_dir,omitempty"` // Path to generated schema files
+	DisableASTAnalysis bool   `json:"disable_ast_analysis,omitempty"`
 }
-
 
 // Contact represents contact information for the API
 type Contact struct {
@@ -54,6 +55,16 @@ func NewDevelopmentConfig() *Config {
 	config := NewConfig()
 	config.Environment = "development"
 	return config
+}
+
+// IsProductionMode reports whether runtime source analysis should be skipped.
+func (c *Config) IsProductionMode() bool {
+	return c != nil && strings.EqualFold(strings.TrimSpace(c.Environment), "production")
+}
+
+// IsASTAnalysisEnabled reports whether runtime source analysis is enabled.
+func (c *Config) IsASTAnalysisEnabled() bool {
+	return c != nil && !c.DisableASTAnalysis
 }
 
 // GetServerURL returns the server URL for the OpenAPI spec

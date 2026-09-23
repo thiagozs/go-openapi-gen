@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 
@@ -78,10 +79,18 @@ func NewGenerator(framework any, httpServer integration.HTTPServer, options *Opt
 
 	// Load static schemas if configured
 	if options.config != nil && options.config.SchemaDir != "" {
-		if err := generator.schemaRegistry.LoadStaticSchemas(options.config.SchemaDir); err != nil {
-			generator.logger.Warn("Failed to load static schemas", "error", err, "schema_dir", options.config.SchemaDir)
-		} else {
-			generator.logger.Info("Loaded static schemas", "schema_dir", options.config.SchemaDir)
+		info, statErr := os.Stat(options.config.SchemaDir)
+		switch {
+		case statErr == nil && info.IsDir():
+			if err := generator.schemaRegistry.LoadStaticSchemas(options.config.SchemaDir); err != nil {
+				generator.logger.Warn("Failed to load static schemas", "error", err, "schema_dir", options.config.SchemaDir)
+			} else {
+				generator.logger.Info("Loaded static schemas", "schema_dir", options.config.SchemaDir)
+			}
+		case statErr == nil:
+			generator.logger.Warn("Static schema path is not a directory", "schema_dir", options.config.SchemaDir)
+		case !os.IsNotExist(statErr):
+			generator.logger.Warn("Failed to inspect static schemas", "error", statErr, "schema_dir", options.config.SchemaDir)
 		}
 	}
 
@@ -203,6 +212,11 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 	}
 	if metadata.ResponseSchema != nil {
 		handlerSchema.ResponseSchema = *metadata.ResponseSchema
+	}
+
+	// Methods without request bodies must not publish fallback request schemas.
+	if !g.hasRequestBody(route.Method) && metadata.RequestSchema == nil {
+		handlerSchema.RequestSchema = spec.Schema{}
 	}
 
 	// Register the discovered schemas with the schema registry
@@ -482,6 +496,7 @@ func (g *Generator) generateRequestBodyFromRoute(route spec.RouteInfo) spec.Requ
 
 // hasRequestBody determines if an operation should have a request body
 func (g *Generator) hasRequestBody(method string) bool {
+	method = strings.ToUpper(method)
 	return method == "POST" || method == "PUT" || method == "PATCH"
 }
 
@@ -517,8 +532,26 @@ func (g *Generator) isPublicEndpoint(path string) bool {
 
 // generateOperationID generates a unique operation ID
 func (g *Generator) generateOperationID(method, path string) string {
-	// Use path parser to generate consistent ID
-	return g.pathParser.GenerateHandlerName(method, path)
+	operationID := g.pathParser.GenerateHandlerName(method, path)
+	paramRegex := regexp.MustCompile(`:(\w+)`)
+	matches := paramRegex.FindAllStringSubmatch(path, -1)
+	if len(matches) == 0 {
+		return operationID
+	}
+
+	// Parameterized detail routes commonly share all static segments with
+	// their collection route. Include parameter names so their operation IDs
+	// remain unique (for example, GetPayments and GetPaymentsById).
+	operationID += "By"
+	for index, match := range matches {
+		if index > 0 {
+			operationID += "And"
+		}
+		parameter := match[1]
+		operationID += strings.ToUpper(parameter[:1]) + strings.ToLower(parameter[1:])
+	}
+
+	return operationID
 }
 
 // generateSchemaReference creates a schema reference for registered schemas

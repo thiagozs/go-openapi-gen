@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,84 @@ import (
 	"github.com/thiagozs/go-openapi-gen/parser"
 	"github.com/thiagozs/go-openapi-gen/spec"
 )
+
+func TestBearerSecuritySchemeOmitsOAuthFlows(t *testing.T) {
+	generator := &Generator{}
+	data, err := json.Marshal(generator.generateSecuritySchemes()["bearerAuth"])
+	require.NoError(t, err)
+
+	var scheme map[string]any
+	require.NoError(t, json.Unmarshal(data, &scheme))
+	assert.Equal(t, "http", scheme["type"])
+	assert.Equal(t, "bearer", scheme["scheme"])
+	assert.NotContains(t, scheme, "flows")
+}
+
+func TestOAuthFlowsOnlySerializeConfiguredFlow(t *testing.T) {
+	scheme := spec.SecurityScheme{
+		Type: "oauth2",
+		Flows: spec.OAuthFlows{
+			ClientCredentials: spec.OAuthFlow{TokenURL: "https://example.com/token"},
+		},
+	}
+	data, err := json.Marshal(scheme)
+	require.NoError(t, err)
+
+	var document map[string]any
+	require.NoError(t, json.Unmarshal(data, &document))
+	flows, ok := document["flows"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, flows, "clientCredentials")
+	assert.NotContains(t, flows, "implicit")
+	clientCredentials, ok := flows["clientCredentials"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{}, clientCredentials["scopes"])
+}
+
+func TestParameterizedRoutesGenerateDistinctOperationIDs(t *testing.T) {
+	generator := &Generator{pathParser: parser.NewPathParser()}
+
+	assert.Equal(t, "GetAdminTenants", generator.generateOperationID("GET", "/admin/v1/tenants"))
+	assert.Equal(t, "GetAdminTenantsById", generator.generateOperationID("GET", "/admin/v1/tenants/:id"))
+	assert.Equal(t, "GetPaymentsByTenantAndId", generator.generateOperationID("GET", "/v1/:tenant/payments/:id"))
+}
+
+func TestConfigControlsRuntimeASTAnalysis(t *testing.T) {
+	development := NewDevelopmentConfig()
+	assert.False(t, development.IsProductionMode())
+	assert.True(t, development.IsASTAnalysisEnabled())
+
+	production := NewProductionConfig()
+	assert.True(t, production.IsProductionMode())
+	production.DisableASTAnalysis = true
+	assert.False(t, production.IsASTAnalysisEnabled())
+}
+
+func TestFallbackRequestSchemaOnlyAppliesToMethodsWithBodies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	handler := func(c *gin.Context) {}
+	engine.GET("/generic-get", handler)
+	engine.POST("/generic-post", handler)
+
+	options := &Options{}
+	config := NewProductionConfig()
+	config.SchemaDir = ""
+	WithConfig(config)(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+
+	assert.NotContains(t, document.Components.Schemas, "GET_generic-getrequest")
+	assert.Contains(t, document.Components.Schemas, "POST_generic-postrequest")
+	assert.NotNil(t, document.Paths["/generic-get"].Get)
+	assert.Nil(t, document.Paths["/generic-get"].Get.RequestBody)
+	assert.NotNil(t, document.Paths["/generic-post"].Post)
+	assert.NotNil(t, document.Paths["/generic-post"].Post.RequestBody)
+}
 
 func TestNewGeneratorSelectsGinAnalyzer(t *testing.T) {
 	gin.SetMode(gin.TestMode)

@@ -327,66 +327,74 @@ func (a *ASTAnalyzer) ExtractGinHandlerTypes(methodDecl *ast.FuncDecl, sourceFil
 
 // ExtractHertzRequestType extracts request type from Hertz handler AST
 func (a *ASTAnalyzer) ExtractHertzRequestType(methodDecl *ast.FuncDecl) reflect.Type {
+	var requestType reflect.Type
 	// Look for BindAndValidate calls in the function body
 	ast.Inspect(methodDecl.Body, func(n ast.Node) bool {
 		if callExpr, ok := n.(*ast.CallExpr); ok {
 			if a.IsHertzBindCall(callExpr) {
 				if reqType := a.ExtractTypeFromCallExpr(callExpr); reqType != nil {
+					requestType = reqType
 					return false
 				}
 			}
 		}
 		return true
 	})
-	return nil
+	return requestType
 }
 
 // ExtractHertzResponseType extracts response type from Hertz handler AST
 func (a *ASTAnalyzer) ExtractHertzResponseType(methodDecl *ast.FuncDecl) reflect.Type {
+	var responseType reflect.Type
 	// Look for JSON calls in the function body
 	ast.Inspect(methodDecl.Body, func(n ast.Node) bool {
 		if callExpr, ok := n.(*ast.CallExpr); ok {
 			if a.IsHertzJSONCall(callExpr) {
-				if respType := a.ExtractTypeFromCallExpr(callExpr); respType != nil {
+				if respType := a.ExtractTypeFromCallArg(callExpr, 1); respType != nil {
+					responseType = respType
 					return false
 				}
 			}
 		}
 		return true
 	})
-	return nil
+	return responseType
 }
 
 // ExtractGinRequestType extracts request type from Gin handler AST
 func (a *ASTAnalyzer) ExtractGinRequestType(methodDecl *ast.FuncDecl) reflect.Type {
+	var requestType reflect.Type
 	// Look for ShouldBind calls in the function body
 	ast.Inspect(methodDecl.Body, func(n ast.Node) bool {
 		if callExpr, ok := n.(*ast.CallExpr); ok {
 			if a.IsGinBindCall(callExpr) {
 				if reqType := a.ExtractTypeFromCallExpr(callExpr); reqType != nil {
+					requestType = reqType
 					return false
 				}
 			}
 		}
 		return true
 	})
-	return nil
+	return requestType
 }
 
 // ExtractGinResponseType extracts response type from Gin handler AST
 func (a *ASTAnalyzer) ExtractGinResponseType(methodDecl *ast.FuncDecl) reflect.Type {
+	var responseType reflect.Type
 	// Look for JSON calls in the function body
 	ast.Inspect(methodDecl.Body, func(n ast.Node) bool {
 		if callExpr, ok := n.(*ast.CallExpr); ok {
 			if a.IsGinJSONCall(callExpr) {
-				if respType := a.ExtractTypeFromCallExpr(callExpr); respType != nil {
+				if respType := a.ExtractTypeFromCallArg(callExpr, 1); respType != nil {
+					responseType = respType
 					return false
 				}
 			}
 		}
 		return true
 	})
-	return nil
+	return responseType
 }
 
 // IsHertzBindCall checks if a call expression is a Hertz BindAndValidate call
@@ -423,19 +431,25 @@ func (a *ASTAnalyzer) IsGinJSONCall(callExpr *ast.CallExpr) bool {
 
 // ExtractTypeFromCallExpr extracts type information from a call expression
 func (a *ASTAnalyzer) ExtractTypeFromCallExpr(callExpr *ast.CallExpr) reflect.Type {
-	if len(callExpr.Args) == 0 {
+	return a.ExtractTypeFromCallArg(callExpr, 0)
+}
+
+// ExtractTypeFromCallArg extracts type information from one call argument.
+func (a *ASTAnalyzer) ExtractTypeFromCallArg(callExpr *ast.CallExpr, index int) reflect.Type {
+	if index < 0 || len(callExpr.Args) <= index {
 		return nil
 	}
+	expr := callExpr.Args[index]
 
 	// Look for address-of operator (&) for struct types
-	if unaryExpr, ok := callExpr.Args[0].(*ast.UnaryExpr); ok && unaryExpr.Op == token.AND {
+	if unaryExpr, ok := expr.(*ast.UnaryExpr); ok && unaryExpr.Op == token.AND {
 		if compositeLit, ok := unaryExpr.X.(*ast.CompositeLit); ok {
 			return a.ExtractTypeFromCompositeLit(compositeLit)
 		}
 	}
 
 	// Direct composite literal
-	if compositeLit, ok := callExpr.Args[0].(*ast.CompositeLit); ok {
+	if compositeLit, ok := expr.(*ast.CompositeLit); ok {
 		return a.ExtractTypeFromCompositeLit(compositeLit)
 	}
 

@@ -1,5 +1,7 @@
 package spec
 
+import "encoding/json"
+
 // OpenAPISpec represents the OpenAPI 3.0 specification
 type OpenAPISpec struct {
 	OpenAPI    string                `json:"openapi"`
@@ -205,6 +207,24 @@ type SecurityScheme struct {
 	OpenIDConnectURL string     `json:"openIdConnectUrl,omitempty"`
 }
 
+// MarshalJSON omits an empty OAuth flows object. encoding/json does not
+// consider value structs empty for the purposes of omitempty, which would
+// otherwise add OAuth-only fields to HTTP bearer schemes.
+func (s SecurityScheme) MarshalJSON() ([]byte, error) {
+	type securitySchemeAlias SecurityScheme
+	type securitySchemeJSON struct {
+		securitySchemeAlias
+		Flows *OAuthFlows `json:"flows,omitempty"`
+	}
+
+	encoded := securitySchemeJSON{securitySchemeAlias: securitySchemeAlias(s)}
+	if !s.Flows.isEmpty() {
+		encoded.Flows = &s.Flows
+	}
+
+	return json.Marshal(encoded)
+}
+
 type OAuthFlows struct {
 	Implicit          OAuthFlow `json:"implicit,omitempty"`
 	Password          OAuthFlow `json:"password,omitempty"`
@@ -212,11 +232,61 @@ type OAuthFlows struct {
 	AuthorizationCode OAuthFlow `json:"authorizationCode,omitempty"`
 }
 
+func (f OAuthFlows) isEmpty() bool {
+	return f.Implicit.isEmpty() &&
+		f.Password.isEmpty() &&
+		f.ClientCredentials.isEmpty() &&
+		f.AuthorizationCode.isEmpty()
+}
+
+// MarshalJSON only includes configured flows. OAuthFlow is a value struct, so
+// omitempty alone would serialize every unconfigured flow with null scopes.
+func (f OAuthFlows) MarshalJSON() ([]byte, error) {
+	flows := make(map[string]OAuthFlow, 4)
+	if !f.Implicit.isEmpty() {
+		flows["implicit"] = f.Implicit
+	}
+	if !f.Password.isEmpty() {
+		flows["password"] = f.Password
+	}
+	if !f.ClientCredentials.isEmpty() {
+		flows["clientCredentials"] = f.ClientCredentials
+	}
+	if !f.AuthorizationCode.isEmpty() {
+		flows["authorizationCode"] = f.AuthorizationCode
+	}
+
+	return json.Marshal(flows)
+}
+
 type OAuthFlow struct {
 	AuthorizationURL string            `json:"authorizationUrl,omitempty"`
 	TokenURL         string            `json:"tokenUrl,omitempty"`
 	RefreshURL       string            `json:"refreshUrl,omitempty"`
 	Scopes           map[string]string `json:"scopes"`
+}
+
+func (f OAuthFlow) isEmpty() bool {
+	return f.AuthorizationURL == "" && f.TokenURL == "" &&
+		f.RefreshURL == "" && f.Scopes == nil
+}
+
+// MarshalJSON preserves scopes as an object, as required by OpenAPI, even
+// when a configured flow does not define any scopes.
+func (f OAuthFlow) MarshalJSON() ([]byte, error) {
+	type oauthFlowAlias OAuthFlow
+	if f.Scopes != nil {
+		return json.Marshal(oauthFlowAlias(f))
+	}
+
+	encoded := struct {
+		oauthFlowAlias
+		Scopes map[string]string `json:"scopes"`
+	}{
+		oauthFlowAlias: oauthFlowAlias(f),
+		Scopes:         map[string]string{},
+	}
+	return json.Marshal(encoded)
 }
 
 type SecurityRequirement map[string][]string

@@ -1,7 +1,6 @@
 package gin_routing
 
 import (
-	"net/http"
 	"strings"
 	"testing"
 
@@ -9,65 +8,6 @@ import (
 	openapi "github.com/thiagozs/go-openapi-gen"
 	"github.com/thiagozs/go-openapi-gen/integration"
 )
-
-// OauthHandler represents the OAuth handler with methods matching the schemas
-type OauthHandler struct{}
-
-// NewOauthHandler creates a new OAuth handler instance
-func NewOauthHandler() *OauthHandler {
-	return &OauthHandler{}
-}
-
-// Login handles OAuth login requests - matches Login.json schema
-func (h *OauthHandler) Login(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"auth_url": "https://oauth.provider.com/auth",
-		"state":    "random-state-token",
-	})
-}
-
-// Callback handles OAuth callback requests - matches Callback.json schema
-func (h *OauthHandler) Callback(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"access_token":  "jwt-access-token",
-		"refresh_token": "jwt-refresh-token",
-		"expires_in":    3600,
-		"is_new_user":   true,
-		"user": gin.H{
-			"id":             "user-123",
-			"email":          "user@example.com",
-			"first_name":     "John",
-			"last_name":      "Doe",
-			"full_name":      "John Doe",
-			"status":         "active",
-			"email_verified": true,
-			"mfa_enabled":    false,
-			"last_login_at":  "2023-01-01T00:00:00Z",
-			"created_at":     "2023-01-01T00:00:00Z",
-			"updated_at":     "2023-01-01T00:00:00Z",
-		},
-	})
-}
-
-// GetProviders handles getting OAuth providers - matches GetProviders.json schema
-func (h *OauthHandler) GetProviders(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"google": gin.H{
-			"name":      "Google",
-			"client_id": "google-client-id",
-			"auth_url":  "https://accounts.google.com/oauth/authorize",
-			"token_url": "https://oauth2.googleapis.com/token",
-			"user_info": "https://www.googleapis.com/oauth2/v2/userinfo",
-		},
-		"github": gin.H{
-			"name":      "GitHub",
-			"client_id": "github-client-id",
-			"auth_url":  "https://github.com/login/oauth/authorize",
-			"token_url": "https://github.com/login/oauth/access_token",
-			"user_info": "https://api.github.com/user",
-		},
-	})
-}
 
 // TestLogger is a simple logger for testing
 type TestLogger struct {
@@ -199,8 +139,8 @@ func TestComprehensiveHandlerMatching(t *testing.T) {
 	for name, schema := range spec.Components.Schemas {
 		t.Logf("Schema: %s", name)
 
-		// Check if this is a generic schema (contains "Generic response schema")
-		if strings.Contains(schema.Description, "Generic response schema") {
+		// Any generic request or response schema is unexpected when sources are available.
+		if strings.Contains(schema.Description, "Generic ") {
 			genericSchemaCount++
 			t.Logf("  ⚠️  Generic schema detected: %s", name)
 		} else {
@@ -214,11 +154,10 @@ func TestComprehensiveHandlerMatching(t *testing.T) {
 	t.Logf("Generic schemas: %d", genericSchemaCount)
 	t.Logf("Specific schemas: %d", specificSchemaCount)
 
-	if genericSchemaCount > specificSchemaCount {
-		t.Error("❌ Too many generic schemas - handler name matching may not be working properly")
-		t.Log("This suggests that the handler names from routes are not matching the schema file names")
+	if genericSchemaCount != 0 {
+		t.Errorf("unexpected generic schemas: %d", genericSchemaCount)
 	} else {
-		t.Log("✓ Good ratio of specific to generic schemas")
+		t.Log("✓ No generic schemas generated")
 	}
 
 	// Step 9: Test the actual schema content for OAuth routes

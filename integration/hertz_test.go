@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/stretchr/testify/assert"
+	"github.com/thiagozs/go-openapi-gen/integration/testfixtures"
 )
 
 // TestHertzHandlerAnalyzer_NewAnalyzer tests the analyzer creation
@@ -55,6 +56,20 @@ func TestHertzHandlerAnalyzer_AnalyzeHandler(t *testing.T) {
 	// For a simple handler, we expect empty schemas
 	assert.Equal(t, schema.RequestSchema.Type, "object")
 	assert.Equal(t, schema.ResponseSchema.Type, "object")
+}
+
+func TestHertzHandlerAnalyzer_AnalyzeMethodHandler(t *testing.T) {
+	analyzer := NewHertzHandlerAnalyzer()
+	schema := analyzer.AnalyzeHandler((&testfixtures.InvoiceHandler{}).Create)
+
+	assert.Equal(t, "object", schema.RequestSchema.Type)
+	assert.Contains(t, schema.RequestSchema.Properties, "amount")
+	assert.Contains(t, schema.RequestSchema.Properties, "currency")
+	assert.Contains(t, schema.RequestSchema.Required, "amount")
+
+	assert.Equal(t, "object", schema.ResponseSchema.Type)
+	assert.Contains(t, schema.ResponseSchema.Properties, "id")
+	assert.Contains(t, schema.ResponseSchema.Properties, "status")
 }
 
 // TestHertzHandlerAnalyzer_ValidateSignature tests signature validation

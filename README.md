@@ -142,15 +142,24 @@ CMD ["./myapp"]
 
 For source-free production images, generate Go code containing the schemas before
 building the application. Add one directive to a file in each package containing
-Gin handlers:
+handlers:
+
+For Gin:
 
 ```go
 //go:generate go run github.com/thiagozs/go-openapi-gen/cmd/openapi-gen
 package handlers
 ```
 
-The generator finds `ShouldBind*`/`Bind*` request types and structured `JSON`
-response types, then writes `zz_openapi_gen.go`. Its `init` function registers
+For Hertz:
+
+```go
+//go:generate go run github.com/thiagozs/go-openapi-gen/cmd/openapi-gen -framework hertz
+package handlers
+```
+
+The generator finds Gin `ShouldBind*`/`Bind*` and Hertz `BindAndValidate`
+request types, plus structured `JSON` response types, then writes `zz_openapi_gen.go`. Its `init` function registers
 the schemas before the OpenAPI `Generator` is created, so no source or external
 schema files are required in the final container.
 
@@ -191,7 +200,7 @@ Options:
   -output string     Generated Go file (default "zz_openapi_gen.go")
   -verbose           Enable verbose output
   -handler string    Handler name (auto-detected if not provided)
-  -framework string  Handler framework (currently "gin")
+  -framework string  Handler framework ("gin" or "hertz"; default "gin")
 ```
 
 ### Example Usage

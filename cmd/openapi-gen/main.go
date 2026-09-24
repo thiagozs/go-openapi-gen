@@ -31,10 +31,11 @@ type options struct {
 }
 
 type generatedHandler struct {
-	name     string
-	id       string
-	request  spec.Schema
-	response spec.Schema
+	name           string
+	id             string
+	request        spec.Schema
+	response       spec.Schema
+	responseStatus int
 }
 
 func main() {
@@ -131,15 +132,15 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 			if !isFrameworkHandler(decl, pkg.TypesInfo, opts.framework) {
 				continue
 			}
-			requestType, responseType := typesFromHandler(decl, pkg.TypesInfo, opts.framework)
-			handler := generatedHandler{name: decl.Name.Name, id: declarationHandlerID(pkg.PkgPath, decl)}
+			requestType, responseType, responseExpr, responseStatus := typesFromHandler(decl, pkg.TypesInfo, opts.framework)
+			handler := generatedHandler{name: decl.Name.Name, id: declarationHandlerID(pkg.PkgPath, decl), responseStatus: responseStatus}
 			if requestType != nil {
 				handler.request = schemaGenerator.GenerateSchemaFromGoType(requestType)
 			}
 			if responseType != nil {
-				handler.response = schemaGenerator.GenerateSchemaFromGoType(responseType)
+				handler.response = schemaGenerator.GenerateSchemaFromGoExpr(responseExpr, pkg.TypesInfo)
 			}
-			if !schemaSet(handler.request) && !schemaSet(handler.response) {
+			if !schemaSet(handler.request) && !schemaSet(handler.response) && handler.responseStatus == 0 {
 				continue
 			}
 			if _, exists := byID[handler.id]; exists {
@@ -227,9 +228,11 @@ func isHertzHandler(decl *ast.FuncDecl, info *types.Info) bool {
 		named.Obj().Name() == "RequestContext"
 }
 
-func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string) (types.Type, types.Type) {
+func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string) (types.Type, types.Type, ast.Expr, int) {
 	var requestType types.Type
 	var responseType types.Type
+	var responseExpr ast.Expr
+	responseStatus := 0
 	bestResponseScore := -1
 	ast.Inspect(decl.Body, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
@@ -247,12 +250,24 @@ func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string) (t
 			candidate := info.TypeOf(call.Args[1])
 			if score := responseCallScore(call.Args[0], candidate, info); score > bestResponseScore {
 				responseType = candidate
+				responseExpr = call.Args[1]
 				bestResponseScore = score
+				if status, ok := httpStatusCode(call.Args[0], info); ok && status >= 200 && status < 300 {
+					responseStatus = status
+				}
+			}
+		}
+		if isStatusOnlyCall(call) {
+			if status, ok := httpStatusCode(call.Args[0], info); ok && status >= 200 && status < 300 && 200 > bestResponseScore {
+				responseType = nil
+				responseExpr = nil
+				responseStatus = status
+				bestResponseScore = 200
 			}
 		}
 		return true
 	})
-	return requestType, responseType
+	return requestType, responseType, responseExpr, responseStatus
 }
 
 func isBindMethod(name, framework string) bool {
@@ -307,6 +322,40 @@ scored:
 	}
 }
 
+func httpStatusCode(expr ast.Expr, info *types.Info) (int, bool) {
+	if expr == nil {
+		return 0, false
+	}
+	if info == nil {
+		return 0, false
+	}
+	value := info.Types[expr].Value
+	if value == nil {
+		return 0, false
+	}
+	code, exact := constant.Int64Val(value)
+	if !exact {
+		return 0, false
+	}
+	return int(code), true
+}
+
+func isStatusOnlyCall(call *ast.CallExpr) bool {
+	if len(call.Args) != 1 {
+		return false
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	switch selector.Sel.Name {
+	case "Status", "SetStatusCode":
+		return true
+	default:
+		return false
+	}
+}
+
 func responseCallScore(status ast.Expr, responseType types.Type, info *types.Info) int {
 	typeScore := typeScore(responseType)
 	if typeScore < 0 {
@@ -357,6 +406,7 @@ func renderGeneratedFile(packageName string, handlers []generatedHandler) ([]byt
 		fmt.Fprintf(&output, "\topenapianalyzer.RegisterGeneratedHandlerSchema(%q, openapianalyzer.HandlerSchema{\n", handler.id)
 		fmt.Fprintf(&output, "\t\tRequestSchema: openapiGeneratedSchema(%s),\n", strconv.Quote(string(requestJSON)))
 		fmt.Fprintf(&output, "\t\tResponseSchema: openapiGeneratedSchema(%s),\n", strconv.Quote(string(responseJSON)))
+		fmt.Fprintf(&output, "\t\tResponseStatus: %d,\n", handler.responseStatus)
 		output.WriteString("\t})\n")
 	}
 	output.WriteString("}\n")

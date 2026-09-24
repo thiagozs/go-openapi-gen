@@ -40,3 +40,20 @@ func (h *Handler) Index(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, map[string]CreateResponse{"first": {ID: "1"}})
 }
+
+func (h *Handler) ListEnvelope(c *gin.Context) {
+	items := []CreateResponse{{ID: "1"}}
+	if c.Query("fail") != "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items})
+}
+
+func (h *Handler) Delete(c *gin.Context) {
+	if c.Query("fail") != "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "not found"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}

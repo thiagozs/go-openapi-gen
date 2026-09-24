@@ -44,3 +44,20 @@ func (h *PaymentHandler) Index(c *gin.Context) {
 		"payment-1": {ID: "payment-1", Status: "created"},
 	})
 }
+
+func (h *PaymentHandler) ListEnvelope(c *gin.Context) {
+	endpoints := []PaymentResponse{{ID: "payment-1", Status: "created"}}
+	if c.Query("fail") != "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "tenant not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": endpoints})
+}
+
+func (h *PaymentHandler) Delete(c *gin.Context) {
+	if c.Query("fail") != "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "tenant not found"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}

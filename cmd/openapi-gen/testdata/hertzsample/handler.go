@@ -41,3 +41,12 @@ func (h *Handler) Index(ctx context.Context, c *app.RequestContext) {
 	}
 	c.JSON(http.StatusOK, map[string]CreateResponse{"first": {ID: "1"}})
 }
+
+func (h *Handler) ListEnvelope(ctx context.Context, c *app.RequestContext) {
+	items := []CreateResponse{{ID: "1"}}
+	if len(c.Query("fail")) > 0 {
+		c.JSON(http.StatusUnauthorized, map[string]any{"code": "UNAUTHORIZED", "message": "not found"})
+		return
+	}
+	c.JSON(http.StatusOK, map[string]any{"data": items})
+}

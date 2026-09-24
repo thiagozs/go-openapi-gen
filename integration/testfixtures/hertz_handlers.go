@@ -45,3 +45,12 @@ func (h *InvoiceHandler) Index(ctx context.Context, c *app.RequestContext) {
 		"invoice-1": {ID: "invoice-1", Status: "created"},
 	})
 }
+
+func (h *InvoiceHandler) ListEnvelope(ctx context.Context, c *app.RequestContext) {
+	invoices := []InvoiceResponse{{ID: "invoice-1", Status: "created"}}
+	if len(c.Query("fail")) > 0 {
+		c.JSON(http.StatusUnauthorized, map[string]any{"code": "UNAUTHORIZED", "message": "tenant not found"})
+		return
+	}
+	c.JSON(http.StatusOK, map[string]any{"data": invoices})
+}

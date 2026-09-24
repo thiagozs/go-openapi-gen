@@ -87,6 +87,13 @@ func TestHertzHandlerAnalyzer_AnalyzeCollectionResponses(t *testing.T) {
 	require.NotNil(t, indexSchema.AdditionalProperties)
 	assert.Equal(t, "object", indexSchema.AdditionalProperties.Type)
 	assert.Contains(t, indexSchema.AdditionalProperties.Properties, "id")
+
+	envelopeSchema := analyzer.AnalyzeHandler((&testfixtures.InvoiceHandler{}).ListEnvelope).ResponseSchema
+	dataSchema, exists := envelopeSchema.Properties["data"]
+	require.True(t, exists)
+	require.Equal(t, "array", dataSchema.Type)
+	require.NotNil(t, dataSchema.Items)
+	assert.Contains(t, dataSchema.Items.Properties, "id")
 }
 
 // TestHertzHandlerAnalyzer_ValidateSignature tests signature validation

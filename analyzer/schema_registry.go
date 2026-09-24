@@ -19,29 +19,32 @@ var generatedHandlerSchemas = struct {
 
 // SchemaRegistry manages manual schema registration and overrides
 type SchemaRegistry struct {
-	requestSchemas  map[string]spec.Schema // key: "METHOD /path"
-	responseSchemas map[string]spec.Schema
-	typeSchemas     map[reflect.Type]spec.Schema // Direct type mapping
-	routeMetadata   map[string]spec.RouteInfo    // key: "METHOD /path"
-	handlerSchemas  map[string]HandlerSchema     // key: handler name
-	schemaGen       *SchemaGenerator
+	requestSchemas   map[string]spec.Schema // key: "METHOD /path"
+	responseSchemas  map[string]spec.Schema
+	responseStatuses map[string]int
+	typeSchemas      map[reflect.Type]spec.Schema // Direct type mapping
+	routeMetadata    map[string]spec.RouteInfo    // key: "METHOD /path"
+	handlerSchemas   map[string]HandlerSchema     // key: handler name
+	schemaGen        *SchemaGenerator
 }
 
 // HandlerSchema represents request and response schemas for a handler
 type HandlerSchema struct {
 	RequestSchema  spec.Schema
 	ResponseSchema spec.Schema
+	ResponseStatus int
 }
 
 // NewSchemaRegistry creates a new schema registry
 func NewSchemaRegistry() *SchemaRegistry {
 	registry := &SchemaRegistry{
-		requestSchemas:  make(map[string]spec.Schema),
-		responseSchemas: make(map[string]spec.Schema),
-		typeSchemas:     make(map[reflect.Type]spec.Schema),
-		routeMetadata:   make(map[string]spec.RouteInfo),
-		handlerSchemas:  make(map[string]HandlerSchema),
-		schemaGen:       NewSchemaGenerator(),
+		requestSchemas:   make(map[string]spec.Schema),
+		responseSchemas:  make(map[string]spec.Schema),
+		responseStatuses: make(map[string]int),
+		typeSchemas:      make(map[reflect.Type]spec.Schema),
+		routeMetadata:    make(map[string]spec.RouteInfo),
+		handlerSchemas:   make(map[string]HandlerSchema),
+		schemaGen:        NewSchemaGenerator(),
 	}
 	generatedHandlerSchemas.RLock()
 	defer generatedHandlerSchemas.RUnlock()
@@ -69,6 +72,19 @@ func (sr *SchemaRegistry) RegisterRequestSchema(method, path string, schema spec
 func (sr *SchemaRegistry) RegisterResponseSchema(method, path string, schema spec.Schema) {
 	key := sr.createRouteKey(method, path)
 	sr.responseSchemas[key] = schema
+}
+
+// RegisterResponseStatus registers the successful HTTP status for an endpoint.
+func (sr *SchemaRegistry) RegisterResponseStatus(method, path string, status int) {
+	key := sr.createRouteKey(method, path)
+	sr.responseStatuses[key] = status
+}
+
+// GetResponseStatus retrieves the successful HTTP status for an endpoint.
+func (sr *SchemaRegistry) GetResponseStatus(method, path string) (int, bool) {
+	key := sr.createRouteKey(method, path)
+	status, exists := sr.responseStatuses[key]
+	return status, exists
 }
 
 // RegisterHandlerSchemas registers both request and response schemas for an endpoint
@@ -154,10 +170,12 @@ func (sr *SchemaRegistry) GetResponseSchema(method, path string) (spec.Schema, b
 func (sr *SchemaRegistry) GetHandlerSchemas(method, path string) HandlerSchema {
 	reqSchema, _ := sr.GetRequestSchema(method, path)
 	respSchema, _ := sr.GetResponseSchema(method, path)
+	responseStatus, _ := sr.GetResponseStatus(method, path)
 
 	return HandlerSchema{
 		RequestSchema:  reqSchema,
 		ResponseSchema: respSchema,
+		ResponseStatus: responseStatus,
 	}
 }
 
@@ -240,6 +258,7 @@ func (sr *SchemaRegistry) generateSchemaName(routeKey, schemaType string) string
 func (sr *SchemaRegistry) ClearAll() {
 	sr.requestSchemas = make(map[string]spec.Schema)
 	sr.responseSchemas = make(map[string]spec.Schema)
+	sr.responseStatuses = make(map[string]int)
 	sr.typeSchemas = make(map[reflect.Type]spec.Schema)
 	sr.routeMetadata = make(map[string]spec.RouteInfo)
 	sr.handlerSchemas = make(map[string]HandlerSchema)

@@ -273,7 +273,7 @@ func (g *GinHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Handle
 	handlerValue := reflect.ValueOf(handler)
 	if handlerValue.IsValid() && handlerValue.Kind() == reflect.Func &&
 		g.isASTAnalysisEnabled() && !g.isProductionMode() {
-		if astSchema := g.analyzeHandlerSource(handlerValue); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" {
+		if astSchema := g.analyzeHandlerSource(handlerValue); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" || astSchema.ResponseStatus != 0 {
 			return astSchema
 		}
 	}
@@ -296,7 +296,7 @@ func (g *GinHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Handle
 
 	// Second, try AST analysis (only if enabled and source files are available)
 	if g.isASTAnalysisEnabled() && !g.isProductionMode() && g.areSourceFilesAvailable() {
-		if astSchema := g.tryASTAnalysis(handler); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" {
+		if astSchema := g.tryASTAnalysis(handler); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" || astSchema.ResponseStatus != 0 {
 			return astSchema
 		}
 	}
@@ -373,6 +373,7 @@ func (g *GinHandlerAnalyzer) loadTypedPackages(dir string) ([]*packages.Package,
 func (g *GinHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *types.Info) analyzer.HandlerSchema {
 	var schema analyzer.HandlerSchema
 	var responseType types.Type
+	var responseExpr ast.Expr
 	bestResponseScore := -1
 
 	ast.Inspect(decl.Body, func(node ast.Node) bool {
@@ -391,14 +392,27 @@ func (g *GinHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *t
 			candidate := info.TypeOf(call.Args[1])
 			if score := responseCallScore(call.Args[0], candidate, info); score > bestResponseScore {
 				responseType = candidate
+				responseExpr = call.Args[1]
 				bestResponseScore = score
+				if status, ok := httpStatusCode(call.Args[0], info); ok && status >= 200 && status < 300 {
+					schema.ResponseStatus = status
+				}
+			}
+		}
+
+		if isStatusOnlyCall(call) {
+			if status, ok := httpStatusCode(call.Args[0], info); ok && status >= 200 && status < 300 && 200 > bestResponseScore {
+				responseType = nil
+				responseExpr = nil
+				bestResponseScore = 200
+				schema.ResponseStatus = status
 			}
 		}
 		return true
 	})
 
 	if responseType != nil {
-		schema.ResponseSchema = g.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoType(responseType)
+		schema.ResponseSchema = g.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoExpr(responseExpr, info)
 	}
 	return schema
 }
@@ -474,6 +488,40 @@ scored:
 		return 1
 	default:
 		return 0
+	}
+}
+
+func httpStatusCode(expr ast.Expr, info *types.Info) (int, bool) {
+	if expr == nil {
+		return 0, false
+	}
+	if info == nil {
+		return 0, false
+	}
+	value := info.Types[expr].Value
+	if value == nil {
+		return 0, false
+	}
+	code, exact := constant.Int64Val(value)
+	if !exact {
+		return 0, false
+	}
+	return int(code), true
+}
+
+func isStatusOnlyCall(call *ast.CallExpr) bool {
+	if len(call.Args) != 1 {
+		return false
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	switch selector.Sel.Name {
+	case "Status", "SetStatusCode":
+		return true
+	default:
+		return false
 	}
 }
 

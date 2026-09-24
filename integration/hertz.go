@@ -284,7 +284,7 @@ func (h *HertzHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Hand
 	handlerValue := reflect.ValueOf(handler)
 	if handlerValue.IsValid() && handlerValue.Kind() == reflect.Func &&
 		h.isASTAnalysisEnabled() && !h.isProductionMode() {
-		if astSchema := h.analyzeHandlerSource(handlerValue); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" {
+		if astSchema := h.analyzeHandlerSource(handlerValue); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" || astSchema.ResponseStatus != 0 {
 			return astSchema
 		}
 	}
@@ -307,7 +307,7 @@ func (h *HertzHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Hand
 
 	// Second, try AST analysis (only if enabled and source files are available)
 	if h.isASTAnalysisEnabled() && !h.isProductionMode() && h.areSourceFilesAvailable() {
-		if astSchema := h.tryASTAnalysis(handler); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" {
+		if astSchema := h.tryASTAnalysis(handler); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" || astSchema.ResponseStatus != 0 {
 			return astSchema
 		}
 	}
@@ -384,6 +384,7 @@ func (h *HertzHandlerAnalyzer) loadTypedPackages(dir string) ([]*packages.Packag
 func (h *HertzHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *types.Info) analyzer.HandlerSchema {
 	var schema analyzer.HandlerSchema
 	var responseType types.Type
+	var responseExpr ast.Expr
 	bestResponseScore := -1
 
 	ast.Inspect(decl.Body, func(node ast.Node) bool {
@@ -402,14 +403,27 @@ func (h *HertzHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info 
 			candidate := info.TypeOf(call.Args[1])
 			if score := responseCallScore(call.Args[0], candidate, info); score > bestResponseScore {
 				responseType = candidate
+				responseExpr = call.Args[1]
 				bestResponseScore = score
+				if status, ok := httpStatusCode(call.Args[0], info); ok && status >= 200 && status < 300 {
+					schema.ResponseStatus = status
+				}
+			}
+		}
+
+		if isStatusOnlyCall(call) {
+			if status, ok := httpStatusCode(call.Args[0], info); ok && status >= 200 && status < 300 && 200 > bestResponseScore {
+				responseType = nil
+				responseExpr = nil
+				bestResponseScore = 200
+				schema.ResponseStatus = status
 			}
 		}
 		return true
 	})
 
 	if responseType != nil {
-		schema.ResponseSchema = h.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoType(responseType)
+		schema.ResponseSchema = h.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoExpr(responseExpr, info)
 	}
 	return schema
 }

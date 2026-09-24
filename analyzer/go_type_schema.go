@@ -1,12 +1,76 @@
 package analyzer
 
 import (
+	"go/ast"
+	"go/constant"
 	"go/types"
 	"reflect"
 	"strings"
 
 	"github.com/thiagozs/go-openapi-gen/spec"
 )
+
+// GenerateSchemaFromGoExpr preserves concrete value types inside free-form
+// map literals such as gin.H{"data": endpoints}.
+func (sg *SchemaGenerator) GenerateSchemaFromGoExpr(expr ast.Expr, info *types.Info) spec.Schema {
+	if expr == nil {
+		return spec.Schema{}
+	}
+	if info == nil {
+		return spec.Schema{}
+	}
+
+	literal, ok := expr.(*ast.CompositeLit)
+	if !ok {
+		return sg.GenerateSchemaFromGoType(info.TypeOf(expr))
+	}
+	if !isFreeFormStringMap(info.TypeOf(literal)) {
+		return sg.GenerateSchemaFromGoType(info.TypeOf(expr))
+	}
+
+	properties := make(map[string]spec.Schema, len(literal.Elts))
+	for _, element := range literal.Elts {
+		entry, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			return sg.GenerateSchemaFromGoType(info.TypeOf(expr))
+		}
+		value := info.Types[entry.Key].Value
+		if value == nil {
+			return sg.GenerateSchemaFromGoType(info.TypeOf(expr))
+		}
+		if value.Kind() != constant.String {
+			return sg.GenerateSchemaFromGoType(info.TypeOf(expr))
+		}
+		properties[constant.StringVal(value)] = sg.GenerateSchemaFromGoExpr(entry.Value, info)
+	}
+
+	return spec.Schema{Type: "object", Properties: properties}
+}
+
+func isFreeFormStringMap(t types.Type) bool {
+	for {
+		switch typed := t.(type) {
+		case *types.Alias:
+			t = types.Unalias(typed)
+		case *types.Named:
+			t = typed.Underlying()
+		default:
+			mapping, ok := t.(*types.Map)
+			if !ok {
+				return false
+			}
+			key, ok := mapping.Key().Underlying().(*types.Basic)
+			if !ok {
+				return false
+			}
+			if key.Info()&types.IsString == 0 {
+				return false
+			}
+			_, freeForm := mapping.Elem().Underlying().(*types.Interface)
+			return freeForm
+		}
+	}
+}
 
 // GenerateSchemaFromGoType generates an OpenAPI schema from type information
 // produced by go/types. Unlike reflection, this also works for named types in

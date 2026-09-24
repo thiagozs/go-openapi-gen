@@ -87,6 +87,20 @@ func TestGinHandlerAnalyzer_AnalyzeCollectionResponses(t *testing.T) {
 	require.NotNil(t, indexSchema.AdditionalProperties)
 	assert.Equal(t, "object", indexSchema.AdditionalProperties.Type)
 	assert.Contains(t, indexSchema.AdditionalProperties.Properties, "id")
+
+	envelopeSchema := analyzer.AnalyzeHandler((&testfixtures.PaymentHandler{}).ListEnvelope).ResponseSchema
+	dataSchema, exists := envelopeSchema.Properties["data"]
+	require.True(t, exists)
+	require.Equal(t, "array", dataSchema.Type)
+	require.NotNil(t, dataSchema.Items)
+	assert.Contains(t, dataSchema.Items.Properties, "id")
+}
+
+func TestGinHandlerAnalyzer_AnalyzeNoContentResponse(t *testing.T) {
+	schema := NewGinHandlerAnalyzer().AnalyzeHandler((&testfixtures.PaymentHandler{}).Delete)
+
+	assert.Equal(t, http.StatusNoContent, schema.ResponseStatus)
+	assert.Empty(t, schema.ResponseSchema)
 }
 
 // TestGinHandlerAnalyzer_ValidateSignature tests signature validation

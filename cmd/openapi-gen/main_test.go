@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -11,12 +12,17 @@ import (
 func TestAnalyzePackageAndRender(t *testing.T) {
 	packageName, handlers, err := analyzePackage(options{dir: "testdata/sample", framework: "gin"})
 	require.NoError(t, err)
-	require.Len(t, handlers, 3)
+	require.Len(t, handlers, 5)
 	assert.Equal(t, "sample", packageName)
 	assert.Equal(t, "Create", handlers[0].name)
 	assert.Contains(t, handlers[0].request.Properties, "amount")
 	assert.Contains(t, handlers[0].request.Required, "amount")
 	assert.Contains(t, handlers[0].response.Properties, "id")
+	assert.Equal(t, http.StatusCreated, handlers[0].responseStatus)
+
+	deleted := findGeneratedHandler(t, handlers, "Delete")
+	assert.Equal(t, http.StatusNoContent, deleted.responseStatus)
+	assert.Empty(t, deleted.response)
 
 	generated, err := renderGeneratedFile(packageName, handlers)
 	require.NoError(t, err)
@@ -30,7 +36,7 @@ func TestAnalyzeHertzPackage(t *testing.T) {
 		framework: "hertz",
 	})
 	require.NoError(t, err)
-	require.Len(t, handlers, 3)
+	require.Len(t, handlers, 4)
 	assert.Equal(t, "hertzsample", packageName)
 	assert.Equal(t, "Create", handlers[0].name)
 	assert.Contains(t, handlers[0].request.Properties, "amount")
@@ -60,6 +66,13 @@ func TestAnalyzeCollectionResponses(t *testing.T) {
 			assert.Equal(t, "object", index.response.Type)
 			require.NotNil(t, index.response.AdditionalProperties)
 			assert.Contains(t, index.response.AdditionalProperties.Properties, "id")
+
+			envelope := findGeneratedHandler(t, handlers, "ListEnvelope")
+			data, exists := envelope.response.Properties["data"]
+			require.True(t, exists)
+			require.Equal(t, "array", data.Type)
+			require.NotNil(t, data.Items)
+			assert.Contains(t, data.Items.Properties, "id")
 		})
 	}
 }

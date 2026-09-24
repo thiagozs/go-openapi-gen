@@ -112,6 +112,32 @@ func TestNewGeneratorSelectsGinAnalyzer(t *testing.T) {
 	responseSchema, ok := document.Components.Schemas["POST_paymentsresponse"]
 	assert.True(t, ok)
 	assert.Contains(t, responseSchema.Properties, "id")
+	assert.Contains(t, document.Paths["/payments"].Post.Responses, "201")
+	assert.NotContains(t, document.Paths["/payments"].Post.Responses, "200")
+}
+
+func TestDeleteNoContentResponseHasNoSchema(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.DELETE("/payments", (&testfixtures.PaymentHandler{}).Delete)
+
+	options := &Options{}
+	WithConfig(NewDevelopmentConfig())(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+
+	operation := document.Paths["/payments"].Delete
+	require.NotNil(t, operation)
+	response, exists := operation.Responses["204"]
+	require.True(t, exists)
+	assert.Equal(t, "No Content", response.Description)
+	assert.Empty(t, response.Content)
+	assert.NotContains(t, operation.Responses, "200")
+	assert.NotContains(t, document.Components.Schemas, "DELETE_paymentsresponse")
 }
 
 func TestGeneratedSchemaIsUsedWithoutSourceAnalysis(t *testing.T) {

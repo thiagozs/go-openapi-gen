@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"golang.org/x/text/cases"
@@ -192,7 +193,7 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 			g.logger.Info("Using generated schema", "handler", route.HandlerID)
 		}
 	}
-	if !schemaIsSet(handlerSchema.RequestSchema) && !schemaIsSet(handlerSchema.ResponseSchema) && route.HandlerName != "" {
+	if !handlerSchemaIsSet(handlerSchema) && route.HandlerName != "" {
 		if preRegisteredSchema, exists := g.schemaRegistry.GetHandlerSchema(route.HandlerName); exists {
 			handlerSchema = preRegisteredSchema
 			g.logger.Info("Using pre-registered schema", "handler", route.HandlerName)
@@ -203,7 +204,7 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 	}
 
 	// If no pre-registered schema found, try to analyze the handler
-	if !schemaIsSet(handlerSchema.RequestSchema) && !schemaIsSet(handlerSchema.ResponseSchema) && route.Handler != nil {
+	if !handlerSchemaIsSet(handlerSchema) && route.Handler != nil {
 		handlerSchema = g.handlerAnalyzer.AnalyzeHandler(route.Handler)
 	}
 
@@ -226,6 +227,9 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 	if schemaIsSet(handlerSchema.ResponseSchema) {
 		g.schemaRegistry.RegisterResponseSchema(route.Method, route.Path, handlerSchema.ResponseSchema)
 	}
+	if handlerSchema.ResponseStatus != 0 {
+		g.schemaRegistry.RegisterResponseStatus(route.Method, route.Path, handlerSchema.ResponseStatus)
+	}
 
 	// Collect tags
 	tags[metadata.Tags] = true
@@ -237,6 +241,10 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 	g.addOperationToSpec(route.Method, route.Path, operation)
 
 	return nil
+}
+
+func handlerSchemaIsSet(schema analyzer.HandlerSchema) bool {
+	return schema.ResponseStatus != 0 || schemaIsSet(schema.RequestSchema) || schemaIsSet(schema.ResponseSchema)
 }
 
 func schemaIsSet(schema spec.Schema) bool {
@@ -366,36 +374,48 @@ func (g *Generator) extractParameters(path string) []spec.Parameter {
 func (g *Generator) generateResponses(route spec.RouteInfo) map[string]spec.Response {
 	responses := make(map[string]spec.Response)
 
-	// Get response schema from registry
-	var successSchema spec.Schema
-	if _, exists := g.schemaRegistry.GetResponseSchema(route.Method, route.Path); exists {
-		// Use schema reference instead of inline schema
-		successSchema = g.generateSchemaReference(route.Method, route.Path, "response")
-	} else {
-		// Fallback to generic success schema
-		successSchema = spec.Schema{
-			Type: "object",
-			Properties: map[string]spec.Schema{
-				"data":    {Type: "object", Description: "Response data"},
-				"message": {Type: "string", Description: "Success message"},
-			},
+	statusCode := http.StatusOK
+	statusRegistered := false
+	if registeredStatus, exists := g.schemaRegistry.GetResponseStatus(route.Method, route.Path); exists {
+		statusCode = registeredStatus
+		statusRegistered = true
+	}
+
+	description := "Success"
+	if statusRegistered {
+		if statusText := http.StatusText(statusCode); statusText != "" {
+			description = statusText
 		}
 	}
 
-	// Success response
-	responses["200"] = spec.Response{
-		Description: "Success",
-		Content: map[string]spec.MediaType{
-			"application/json": {
-				Schema: successSchema,
-			},
-		},
+	successResponse := spec.Response{Description: description}
+	_, hasSchema := g.schemaRegistry.GetResponseSchema(route.Method, route.Path)
+	if statusCode != http.StatusNoContent {
+		if hasSchema {
+			successResponse.Content = map[string]spec.MediaType{
+				"application/json": {
+					Schema: g.generateSchemaReference(route.Method, route.Path, "response"),
+				},
+			}
+		} else if !statusRegistered {
+			successResponse.Content = map[string]spec.MediaType{
+				"application/json": {
+					Schema: spec.Schema{
+						Type: "object",
+						Properties: map[string]spec.Schema{
+							"data":    {Type: "object", Description: "Response data"},
+							"message": {Type: "string", Description: "Success message"},
+						},
+					},
+				},
+			}
+		}
 	}
+	responses[strconv.Itoa(statusCode)] = successResponse
 
-	// Error responses (reuse existing logic)
 	errorResponses := g.generateDefaultResponses()
 	for code, response := range errorResponses {
-		if code != "200" { // Don't override success response
+		if code != "200" {
 			responses[code] = response
 		}
 	}

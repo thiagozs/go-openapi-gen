@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/format"
 	"go/types"
 	"os"
@@ -244,7 +245,7 @@ func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string) (t
 		}
 		if isJSONMethod(selector.Sel.Name) && len(call.Args) >= 2 {
 			candidate := info.TypeOf(call.Args[1])
-			if score := typeScore(candidate); score > bestResponseScore {
+			if score := responseCallScore(call.Args[0], candidate, info); score > bestResponseScore {
 				responseType = candidate
 				bestResponseScore = score
 			}
@@ -294,10 +295,7 @@ func typeScore(t types.Type) int {
 scored:
 	switch typed := t.(type) {
 	case *types.Named:
-		if _, ok := typed.Underlying().(*types.Struct); ok {
-			return 4
-		}
-		return 3
+		return typeScore(typed.Underlying())
 	case *types.Struct:
 		return 3
 	case *types.Slice, *types.Array:
@@ -307,6 +305,25 @@ scored:
 	default:
 		return 0
 	}
+}
+
+func responseCallScore(status ast.Expr, responseType types.Type, info *types.Info) int {
+	typeScore := typeScore(responseType)
+	if typeScore < 0 {
+		return typeScore
+	}
+
+	statusScore := 100
+	if value := info.Types[status].Value; value != nil {
+		if code, exact := constant.Int64Val(value); exact {
+			statusScore = 0
+			if code >= 200 && code < 300 {
+				statusScore = 200
+			}
+		}
+	}
+
+	return statusScore + typeScore
 }
 
 func schemaSet(schema spec.Schema) bool {

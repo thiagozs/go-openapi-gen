@@ -175,10 +175,8 @@ func (sg *SchemaGenerator) handleMap(t reflect.Type) spec.Schema {
 
 // handleInterface handles interface types
 func (sg *SchemaGenerator) handleInterface(t reflect.Type) spec.Schema {
-	return spec.Schema{
-		Type:        "object",
-		Description: fmt.Sprintf("Interface type: %s", t.String()),
-	}
+	// Interface values can contain any valid JSON value.
+	return spec.Schema{}
 }
 
 // getFieldName extracts field name from json tag or uses struct field name
@@ -376,6 +374,8 @@ func (sg *SchemaGenerator) generateSchemaFromASTType(typeExpr ast.Expr, packageI
 			Type:                 "object",
 			AdditionalProperties: &valueSchema,
 		}
+	case *ast.InterfaceType:
+		return spec.Schema{}
 	}
 
 	// Fallback for unknown types
@@ -398,6 +398,8 @@ func (sg *SchemaGenerator) handleBasicASTType(typeName string) spec.Schema {
 		return spec.Schema{Type: "number"}
 	case "bool":
 		return spec.Schema{Type: "boolean"}
+	case "any":
+		return spec.Schema{}
 	default:
 		return spec.Schema{Type: "object", Description: "Unknown basic type: " + typeName}
 	}

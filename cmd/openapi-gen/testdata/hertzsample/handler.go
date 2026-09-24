@@ -25,3 +25,19 @@ func (h *Handler) Create(ctx context.Context, c *app.RequestContext) {
 	}
 	c.JSON(http.StatusCreated, CreateResponse{ID: "1"})
 }
+
+func (h *Handler) List(ctx context.Context, c *app.RequestContext) {
+	if len(c.Query("fail")) > 0 {
+		c.JSON(http.StatusInternalServerError, map[string]any{"error": "failed"})
+		return
+	}
+	c.JSON(http.StatusOK, []CreateResponse{{ID: "1"}})
+}
+
+func (h *Handler) Index(ctx context.Context, c *app.RequestContext) {
+	if len(c.Query("fail")) > 0 {
+		c.JSON(http.StatusInternalServerError, map[string]any{"error": "failed"})
+		return
+	}
+	c.JSON(http.StatusOK, map[string]CreateResponse{"first": {ID: "1"}})
+}

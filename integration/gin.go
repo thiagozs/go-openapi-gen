@@ -3,6 +3,7 @@ package integration
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -388,7 +389,7 @@ func (g *GinHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *t
 
 		if g.isJSONCall(call) && len(call.Args) >= 2 {
 			candidate := info.TypeOf(call.Args[1])
-			if score := responseTypeScore(candidate); score > bestResponseScore {
+			if score := responseCallScore(call.Args[0], candidate, info); score > bestResponseScore {
 				responseType = candidate
 				bestResponseScore = score
 			}
@@ -464,10 +465,7 @@ func responseTypeScore(t types.Type) int {
 scored:
 	switch typed := t.(type) {
 	case *types.Named:
-		if _, ok := typed.Underlying().(*types.Struct); ok {
-			return 4
-		}
-		return 3
+		return responseTypeScore(typed.Underlying())
 	case *types.Struct:
 		return 3
 	case *types.Slice, *types.Array:
@@ -477,6 +475,25 @@ scored:
 	default:
 		return 0
 	}
+}
+
+func responseCallScore(status ast.Expr, responseType types.Type, info *types.Info) int {
+	typeScore := responseTypeScore(responseType)
+	if typeScore < 0 {
+		return typeScore
+	}
+
+	statusScore := 100
+	if value := info.Types[status].Value; value != nil {
+		if code, exact := constant.Int64Val(value); exact {
+			statusScore = 0
+			if code >= 200 && code < 300 {
+				statusScore = 200
+			}
+		}
+	}
+
+	return statusScore + typeScore
 }
 
 // areSourceFilesAvailable checks if Go source files are available (not in Docker/production)

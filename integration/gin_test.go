@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/thiagozs/go-openapi-gen/integration/testfixtures"
 )
 
@@ -70,6 +71,22 @@ func TestGinHandlerAnalyzer_AnalyzeMethodHandler(t *testing.T) {
 	assert.Equal(t, "object", schema.ResponseSchema.Type)
 	assert.Contains(t, schema.ResponseSchema.Properties, "id")
 	assert.Contains(t, schema.ResponseSchema.Properties, "status")
+}
+
+func TestGinHandlerAnalyzer_AnalyzeCollectionResponses(t *testing.T) {
+	analyzer := NewGinHandlerAnalyzer()
+
+	listSchema := analyzer.AnalyzeHandler((&testfixtures.PaymentHandler{}).List).ResponseSchema
+	require.Equal(t, "array", listSchema.Type)
+	require.NotNil(t, listSchema.Items)
+	assert.Equal(t, "object", listSchema.Items.Type)
+	assert.Contains(t, listSchema.Items.Properties, "id")
+
+	indexSchema := analyzer.AnalyzeHandler((&testfixtures.PaymentHandler{}).Index).ResponseSchema
+	assert.Equal(t, "object", indexSchema.Type)
+	require.NotNil(t, indexSchema.AdditionalProperties)
+	assert.Equal(t, "object", indexSchema.AdditionalProperties.Type)
+	assert.Contains(t, indexSchema.AdditionalProperties.Properties, "id")
 }
 
 // TestGinHandlerAnalyzer_ValidateSignature tests signature validation

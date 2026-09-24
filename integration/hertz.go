@@ -400,7 +400,7 @@ func (h *HertzHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info 
 
 		if h.isJSONCall(call) && len(call.Args) >= 2 {
 			candidate := info.TypeOf(call.Args[1])
-			if score := responseTypeScore(candidate); score > bestResponseScore {
+			if score := responseCallScore(call.Args[0], candidate, info); score > bestResponseScore {
 				responseType = candidate
 				bestResponseScore = score
 			}

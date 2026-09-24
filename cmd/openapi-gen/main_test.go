@@ -11,7 +11,7 @@ import (
 func TestAnalyzePackageAndRender(t *testing.T) {
 	packageName, handlers, err := analyzePackage(options{dir: "testdata/sample", framework: "gin"})
 	require.NoError(t, err)
-	require.Len(t, handlers, 1)
+	require.Len(t, handlers, 3)
 	assert.Equal(t, "sample", packageName)
 	assert.Equal(t, "Create", handlers[0].name)
 	assert.Contains(t, handlers[0].request.Properties, "amount")
@@ -30,10 +30,47 @@ func TestAnalyzeHertzPackage(t *testing.T) {
 		framework: "hertz",
 	})
 	require.NoError(t, err)
-	require.Len(t, handlers, 1)
+	require.Len(t, handlers, 3)
 	assert.Equal(t, "hertzsample", packageName)
 	assert.Equal(t, "Create", handlers[0].name)
 	assert.Contains(t, handlers[0].request.Properties, "amount")
 	assert.Contains(t, handlers[0].request.Required, "amount")
 	assert.Contains(t, handlers[0].response.Properties, "id")
+}
+
+func TestAnalyzeCollectionResponses(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		dir       string
+		framework string
+	}{
+		{name: "gin", dir: "testdata/sample", framework: "gin"},
+		{name: "hertz", dir: "testdata/hertzsample", framework: "hertz"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, handlers, err := analyzePackage(options{dir: test.dir, framework: test.framework})
+			require.NoError(t, err)
+
+			list := findGeneratedHandler(t, handlers, "List")
+			require.Equal(t, "array", list.response.Type)
+			require.NotNil(t, list.response.Items)
+			assert.Contains(t, list.response.Items.Properties, "id")
+
+			index := findGeneratedHandler(t, handlers, "Index")
+			assert.Equal(t, "object", index.response.Type)
+			require.NotNil(t, index.response.AdditionalProperties)
+			assert.Contains(t, index.response.AdditionalProperties.Properties, "id")
+		})
+	}
+}
+
+func findGeneratedHandler(t *testing.T, handlers []generatedHandler, name string) generatedHandler {
+	t.Helper()
+	for _, handler := range handlers {
+		if handler.name == name {
+			return handler
+		}
+	}
+	t.Fatalf("handler %s not found", name)
+	return generatedHandler{}
 }

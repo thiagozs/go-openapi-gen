@@ -3,6 +3,7 @@ package analyzer
 import (
 	"go/parser"
 	"go/token"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,4 +62,12 @@ func TestNewSchemaRegistry(t *testing.T) {
 func TestNewSchemaGenerator(t *testing.T) {
 	generator := NewSchemaGenerator()
 	assert.NotNil(t, generator, "Schema generator should not be nil")
+}
+
+func TestSchemaGenerator_MapOfAnyUsesFreeFormValues(t *testing.T) {
+	schema := NewSchemaGenerator().GenerateSchemaFromType(reflect.TypeOf(map[string]any{}))
+
+	assert.Equal(t, "object", schema.Type)
+	assert.NotNil(t, schema.AdditionalProperties)
+	assert.Empty(t, *schema.AdditionalProperties)
 }

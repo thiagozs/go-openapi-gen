@@ -50,7 +50,7 @@ func (sg *SchemaGenerator) generateSchemaFromGoType(t types.Type, processing map
 	case *types.Struct:
 		return sg.schemaForGoStruct(typed, processing)
 	case *types.Interface:
-		return spec.Schema{Type: "object"}
+		return spec.Schema{}
 	default:
 		return spec.Schema{Type: "object", Description: "Unsupported type: " + types.TypeString(t, nil)}
 	}

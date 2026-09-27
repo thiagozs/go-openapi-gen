@@ -341,20 +341,40 @@ func (sr *SchemaRegistry) RegisterHandlerSchema(handlerName string, schema Handl
 
 // GetHandlerSchema retrieves a schema for a specific handler by name
 func (sr *SchemaRegistry) GetHandlerSchema(handlerName string) (HandlerSchema, bool) {
-	schema, exists := sr.handlerSchemas[handlerName]
+	if schema, exists := sr.handlerSchemas[handlerName]; exists {
+		return schema, true
+	}
+
+	// A registry can be created by another package before the init function in
+	// zz_openapi_gen.go registers its generated schemas. Consult the global
+	// generated registry as well so package initialization order cannot make a
+	// schema invisible to an already-created Generator.
+	generatedHandlerSchemas.RLock()
+	defer generatedHandlerSchemas.RUnlock()
+	schema, exists := generatedHandlerSchemas.schemas[handlerName]
 	return schema, exists
 }
 
 // HasHandlerSchema checks if a schema exists for a specific handler
 func (sr *SchemaRegistry) HasHandlerSchema(handlerName string) bool {
-	_, exists := sr.handlerSchemas[handlerName]
+	_, exists := sr.GetHandlerSchema(handlerName)
 	return exists
 }
 
 // GetAllHandlerNames returns all registered handler names
 func (sr *SchemaRegistry) GetAllHandlerNames() []string {
-	names := make([]string, 0, len(sr.handlerSchemas))
+	uniqueNames := make(map[string]struct{}, len(sr.handlerSchemas))
 	for handlerName := range sr.handlerSchemas {
+		uniqueNames[handlerName] = struct{}{}
+	}
+	generatedHandlerSchemas.RLock()
+	for handlerName := range generatedHandlerSchemas.schemas {
+		uniqueNames[handlerName] = struct{}{}
+	}
+	generatedHandlerSchemas.RUnlock()
+
+	names := make([]string, 0, len(uniqueNames))
+	for handlerName := range uniqueNames {
 		names = append(names, handlerName)
 	}
 	return names

@@ -21,3 +21,20 @@ func TestGeneratedHandlerSchemaIsCopiedIntoNewRegistry(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, generated, actual)
 }
+
+func TestGeneratedHandlerSchemaRegisteredAfterRegistryCreationIsVisible(t *testing.T) {
+	registry := NewSchemaRegistry()
+	generated := HandlerSchema{
+		RequestSchema: spec.Schema{Type: "object", Properties: map[string]spec.Schema{
+			"email": {Type: "string"},
+		}},
+	}
+
+	RegisterGeneratedHandlerSchema("LateGeneratedLogin", generated)
+
+	actual, ok := registry.GetHandlerSchema("LateGeneratedLogin")
+	require.True(t, ok)
+	assert.Equal(t, generated, actual)
+	assert.True(t, registry.HasHandlerSchema("LateGeneratedLogin"))
+	assert.Contains(t, registry.GetAllHandlerNames(), "LateGeneratedLogin")
+}

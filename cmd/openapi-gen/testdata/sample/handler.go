@@ -16,9 +16,22 @@ type CreateResponse struct {
 
 type Handler struct{}
 
+func bindJSON(c *gin.Context, value any) error {
+	return c.ShouldBindJSON(value)
+}
+
 func (h *Handler) Create(c *gin.Context) {
 	var request CreateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, CreateResponse{ID: "1"})
+}
+
+func (h *Handler) CreateWithHelper(c *gin.Context) {
+	var request CreateRequest
+	if err := bindJSON(c, &request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

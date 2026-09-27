@@ -12,13 +12,17 @@ import (
 func TestAnalyzePackageAndRender(t *testing.T) {
 	packageName, handlers, err := analyzePackage(options{dir: "testdata/sample", framework: "gin"})
 	require.NoError(t, err)
-	require.Len(t, handlers, 5)
+	require.Len(t, handlers, 6)
 	assert.Equal(t, "sample", packageName)
 	assert.Equal(t, "Create", handlers[0].name)
 	assert.Contains(t, handlers[0].request.Properties, "amount")
 	assert.Contains(t, handlers[0].request.Required, "amount")
 	assert.Contains(t, handlers[0].response.Properties, "id")
 	assert.Equal(t, http.StatusCreated, handlers[0].responseStatus)
+
+	createWithHelper := findGeneratedHandler(t, handlers, "CreateWithHelper")
+	assert.Contains(t, createWithHelper.request.Properties, "amount")
+	assert.Contains(t, createWithHelper.request.Required, "amount")
 
 	deleted := findGeneratedHandler(t, handlers, "Delete")
 	assert.Equal(t, http.StatusNoContent, deleted.responseStatus)

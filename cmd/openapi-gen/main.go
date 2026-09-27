@@ -122,6 +122,7 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 	}
 
 	schemaGenerator := analyzer.NewSchemaGenerator()
+	bindHelpers := findBindHelpers(pkg.Syntax, pkg.TypesInfo, opts.framework)
 	byID := make(map[string]generatedHandler)
 	for _, file := range pkg.Syntax {
 		for _, declaration := range file.Decls {
@@ -132,7 +133,7 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 			if !isFrameworkHandler(decl, pkg.TypesInfo, opts.framework) {
 				continue
 			}
-			requestType, responseType, responseExpr, responseStatus := typesFromHandler(decl, pkg.TypesInfo, opts.framework)
+			requestType, responseType, responseExpr, responseStatus := typesFromHandler(decl, pkg.TypesInfo, opts.framework, bindHelpers)
 			handler := generatedHandler{name: decl.Name.Name, id: declarationHandlerID(pkg.PkgPath, decl), responseStatus: responseStatus}
 			if requestType != nil {
 				handler.request = schemaGenerator.GenerateSchemaFromGoType(requestType)
@@ -228,7 +229,7 @@ func isHertzHandler(decl *ast.FuncDecl, info *types.Info) bool {
 		named.Obj().Name() == "RequestContext"
 }
 
-func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string) (types.Type, types.Type, ast.Expr, int) {
+func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bindHelpers map[*types.Func]int) (types.Type, types.Type, ast.Expr, int) {
 	var requestType types.Type
 	var responseType types.Type
 	var responseExpr ast.Expr
@@ -238,6 +239,13 @@ func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string) (t
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true
+		}
+		if requestType == nil {
+			if helper, ok := calledFunction(call.Fun, info); ok {
+				if argument, exists := bindHelpers[helper]; exists && argument < len(call.Args) {
+					requestType = info.TypeOf(call.Args[argument])
+				}
+			}
 		}
 		selector, ok := call.Fun.(*ast.SelectorExpr)
 		if !ok {
@@ -268,6 +276,66 @@ func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string) (t
 		return true
 	})
 	return requestType, responseType, responseExpr, responseStatus
+}
+
+// findBindHelpers finds package-local functions and methods that forward one
+// of their parameters to a framework binding method. This supports handlers
+// that centralize binding and error responses in helpers such as
+// bindJSON(c, &input).
+func findBindHelpers(files []*ast.File, info *types.Info, framework string) map[*types.Func]int {
+	helpers := make(map[*types.Func]int)
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			decl, ok := declaration.(*ast.FuncDecl)
+			if !ok || decl.Body == nil {
+				continue
+			}
+			function, ok := info.Defs[decl.Name].(*types.Func)
+			if !ok {
+				continue
+			}
+			signature, ok := function.Type().(*types.Signature)
+			if !ok {
+				continue
+			}
+			ast.Inspect(decl.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || len(call.Args) == 0 {
+					return true
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || !isBindMethod(selector.Sel.Name, framework) {
+					return true
+				}
+				argument, ok := call.Args[0].(*ast.Ident)
+				if !ok {
+					return true
+				}
+				parameter := info.Uses[argument]
+				for index := 0; index < signature.Params().Len(); index++ {
+					if signature.Params().At(index) == parameter {
+						helpers[function] = index
+						return false
+					}
+				}
+				return true
+			})
+		}
+	}
+	return helpers
+}
+
+func calledFunction(expr ast.Expr, info *types.Info) (*types.Func, bool) {
+	switch callable := expr.(type) {
+	case *ast.Ident:
+		function, ok := info.Uses[callable].(*types.Func)
+		return function, ok
+	case *ast.SelectorExpr:
+		function, ok := info.Uses[callable.Sel].(*types.Func)
+		return function, ok
+	default:
+		return nil, false
+	}
 }
 
 func isBindMethod(name, framework string) bool {

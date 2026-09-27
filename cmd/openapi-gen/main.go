@@ -123,6 +123,7 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 
 	schemaGenerator := analyzer.NewSchemaGenerator()
 	bindHelpers := findBindHelpers(pkg.Syntax, pkg.TypesInfo, opts.framework)
+	expressionResolver := newExpressionResolver(pkg.Syntax, pkg.TypesInfo)
 	byID := make(map[string]generatedHandler)
 	for _, file := range pkg.Syntax {
 		for _, declaration := range file.Decls {
@@ -133,7 +134,7 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 			if !isFrameworkHandler(decl, pkg.TypesInfo, opts.framework) {
 				continue
 			}
-			requestType, responseType, responseExpr, responseStatus := typesFromHandler(decl, pkg.TypesInfo, opts.framework, bindHelpers)
+			requestType, responseType, responseExpr, responseStatus := typesFromHandler(decl, pkg.TypesInfo, opts.framework, bindHelpers, expressionResolver)
 			handler := generatedHandler{name: decl.Name.Name, id: declarationHandlerID(pkg.PkgPath, decl), responseStatus: responseStatus}
 			if requestType != nil {
 				handler.request = schemaGenerator.GenerateSchemaFromGoType(requestType)
@@ -229,7 +230,7 @@ func isHertzHandler(decl *ast.FuncDecl, info *types.Info) bool {
 		named.Obj().Name() == "RequestContext"
 }
 
-func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bindHelpers map[*types.Func]int) (types.Type, types.Type, ast.Expr, int) {
+func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bindHelpers map[*types.Func]int, resolver *expressionResolver) (types.Type, types.Type, ast.Expr, int) {
 	var requestType types.Type
 	var responseType types.Type
 	var responseExpr ast.Expr
@@ -258,7 +259,7 @@ func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bi
 			candidate := info.TypeOf(call.Args[1])
 			if score := responseCallScore(call.Args[0], candidate, info); score > bestResponseScore {
 				responseType = candidate
-				responseExpr = call.Args[1]
+				responseExpr = resolver.resolve(call.Args[1])
 				bestResponseScore = score
 				if status, ok := httpStatusCode(call.Args[0], info); ok && status >= 200 && status < 300 {
 					responseStatus = status
@@ -276,6 +277,165 @@ func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bi
 		return true
 	})
 	return requestType, responseType, responseExpr, responseStatus
+}
+
+type expressionSource struct {
+	expr        ast.Expr
+	resultIndex int
+}
+
+// expressionResolver follows local variable initializers and package-local
+// function results. It lets response analysis recover concrete literals hidden
+// behind helpers, for example v, err := scanUser(...), where scanUser returns a
+// gin.H literal.
+type expressionResolver struct {
+	info        *types.Info
+	sources     map[*types.Var]expressionSource
+	funcReturns map[*types.Func][]ast.Expr
+}
+
+func newExpressionResolver(files []*ast.File, info *types.Info) *expressionResolver {
+	resolver := &expressionResolver{
+		info:        info,
+		sources:     make(map[*types.Var]expressionSource),
+		funcReturns: make(map[*types.Func][]ast.Expr),
+	}
+
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			decl, ok := declaration.(*ast.FuncDecl)
+			if !ok || decl.Body == nil {
+				continue
+			}
+			resolver.collectFunctionReturns(decl)
+			ast.Inspect(decl.Body, func(node ast.Node) bool {
+				switch statement := node.(type) {
+				case *ast.AssignStmt:
+					resolver.collectAssignment(statement)
+				case *ast.DeclStmt:
+					resolver.collectDeclaration(statement)
+				}
+				return true
+			})
+		}
+	}
+	return resolver
+}
+
+func (r *expressionResolver) collectFunctionReturns(decl *ast.FuncDecl) {
+	function, ok := r.info.Defs[decl.Name].(*types.Func)
+	if !ok {
+		return
+	}
+	signature, ok := function.Type().(*types.Signature)
+	if !ok || signature.Results().Len() == 0 {
+		return
+	}
+	var returns []ast.Expr
+	ambiguous := false
+	ast.Inspect(decl.Body, func(node ast.Node) bool {
+		statement, ok := node.(*ast.ReturnStmt)
+		if !ok || len(statement.Results) != signature.Results().Len() {
+			return true
+		}
+		if returns != nil {
+			ambiguous = true
+			return false
+		}
+		returns = append([]ast.Expr(nil), statement.Results...)
+		return true
+	})
+	if !ambiguous && returns != nil {
+		r.funcReturns[function] = returns
+	}
+}
+
+func (r *expressionResolver) collectAssignment(statement *ast.AssignStmt) {
+	if len(statement.Rhs) == len(statement.Lhs) {
+		for index, lhs := range statement.Lhs {
+			r.setSource(lhs, expressionSource{expr: statement.Rhs[index], resultIndex: -1})
+		}
+		return
+	}
+	if len(statement.Rhs) == 1 {
+		if _, ok := statement.Rhs[0].(*ast.CallExpr); !ok {
+			return
+		}
+		for index, lhs := range statement.Lhs {
+			r.setSource(lhs, expressionSource{expr: statement.Rhs[0], resultIndex: index})
+		}
+	}
+}
+
+func (r *expressionResolver) collectDeclaration(statement *ast.DeclStmt) {
+	declaration, ok := statement.Decl.(*ast.GenDecl)
+	if !ok {
+		return
+	}
+	for _, item := range declaration.Specs {
+		value, ok := item.(*ast.ValueSpec)
+		if !ok || len(value.Values) != len(value.Names) {
+			continue
+		}
+		for index, name := range value.Names {
+			r.setSource(name, expressionSource{expr: value.Values[index], resultIndex: -1})
+		}
+	}
+}
+
+func (r *expressionResolver) setSource(lhs ast.Expr, source expressionSource) {
+	identifier, ok := lhs.(*ast.Ident)
+	if !ok {
+		return
+	}
+	object := r.info.Defs[identifier]
+	if object == nil {
+		object = r.info.Uses[identifier]
+	}
+	variable, ok := object.(*types.Var)
+	if ok {
+		r.sources[variable] = source
+	}
+}
+
+func (r *expressionResolver) resolve(expr ast.Expr) ast.Expr {
+	return r.resolveWithVisited(expr, -1, make(map[types.Object]bool))
+}
+
+func (r *expressionResolver) resolveWithVisited(expr ast.Expr, resultIndex int, visited map[types.Object]bool) ast.Expr {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		object := r.info.ObjectOf(value)
+		variable, ok := object.(*types.Var)
+		if !ok || visited[variable] {
+			return expr
+		}
+		source, exists := r.sources[variable]
+		if !exists {
+			return expr
+		}
+		visited[variable] = true
+		return r.resolveWithVisited(source.expr, source.resultIndex, visited)
+	case *ast.CallExpr:
+		function, ok := calledFunction(value.Fun, r.info)
+		if !ok || visited[function] {
+			return expr
+		}
+		returns, exists := r.funcReturns[function]
+		if !exists {
+			return expr
+		}
+		if resultIndex < 0 {
+			resultIndex = 0
+		}
+		if resultIndex >= len(returns) {
+			return expr
+		}
+		visited[function] = true
+		return r.resolveWithVisited(returns[resultIndex], -1, visited)
+	default:
+		return expr
+	}
 }
 
 // findBindHelpers finds package-local functions and methods that forward one

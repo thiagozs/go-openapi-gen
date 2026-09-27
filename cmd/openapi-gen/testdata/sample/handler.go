@@ -20,6 +20,10 @@ func bindJSON(c *gin.Context, value any) error {
 	return c.ShouldBindJSON(value)
 }
 
+func scanResponse() (gin.H, error) {
+	return gin.H{"id": "1", "active": true}, nil
+}
+
 func (h *Handler) Create(c *gin.Context) {
 	var request CreateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -36,6 +40,15 @@ func (h *Handler) CreateWithHelper(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, CreateResponse{ID: "1"})
+}
+
+func (h *Handler) GetWithHelperResponse(c *gin.Context) {
+	response, err := scanResponse()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *Handler) List(c *gin.Context) {

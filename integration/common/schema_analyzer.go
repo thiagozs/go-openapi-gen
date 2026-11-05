@@ -35,36 +35,10 @@ func (sa *SchemaAnalyzer) GetTypeResolver() *TypeResolver {
 func (sa *SchemaAnalyzer) GenerateFallbackSchemas() analyzer.HandlerSchema {
 	schema := analyzer.HandlerSchema{}
 
-	// Generate generic request schema for POST/PUT/PATCH methods
-	schema.RequestSchema = spec.Schema{
-		Type: "object",
-		Properties: map[string]spec.Schema{
-			"data": {
-				Type:                 "object",
-				Description:          "Request payload (schema analysis unavailable in production mode)",
-				AdditionalProperties: &spec.Schema{},
-			},
-		},
-		Description: "Generic request schema - AST analysis not available",
-	}
-
-	// Generate generic response schema
-	schema.ResponseSchema = spec.Schema{
-		Type: "object",
-		Properties: map[string]spec.Schema{
-			"data": {
-				Type:                 "object",
-				Description:          "Response data",
-				AdditionalProperties: &spec.Schema{},
-			},
-			"message": {
-				Type:        "string",
-				Description: "Response message",
-				Example:     "Success",
-			},
-		},
-		Description: "Generic response schema - AST analysis not available",
-	}
+	// Schema analysis found nothing: publish an unconstrained object rather
+	// than inventing properties the handler may not use.
+	schema.RequestSchema = spec.Schema{Type: "object", Description: "Request schema could not be determined"}
+	schema.ResponseSchema = spec.Schema{Type: "object", Description: "Response schema could not be determined"}
 
 	return schema
 }

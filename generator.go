@@ -408,15 +408,7 @@ func (g *Generator) generateResponses(route spec.RouteInfo, contentType string) 
 			}
 		} else if !statusRegistered {
 			successResponse.Content = map[string]spec.MediaType{
-				mediaTypeOrJSON(contentType): {
-					Schema: spec.Schema{
-						Type: "object",
-						Properties: map[string]spec.Schema{
-							"data":    {Type: "object", Description: "Response data"},
-							"message": {Type: "string", Description: "Success message"},
-						},
-					},
-				},
+				mediaTypeOrJSON(contentType): {Schema: spec.Schema{Type: "object"}},
 			}
 		}
 	}
@@ -505,12 +497,7 @@ func (g *Generator) generateRequestBodyFromRoute(route spec.RouteInfo, contentTy
 		schema = g.generateSchemaReference(route.Method, route.Path, "request")
 	} else {
 		// Fallback to generic schema
-		schema = spec.Schema{
-			Type: "object",
-			Properties: map[string]spec.Schema{
-				"data": {Type: "object", Description: "Request data"},
-			},
-		}
+		schema = spec.Schema{Type: "object"}
 	}
 
 	return spec.RequestBody{

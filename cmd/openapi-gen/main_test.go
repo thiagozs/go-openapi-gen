@@ -148,3 +148,25 @@ func findGeneratedHandler(t *testing.T, handlers []generatedHandler, name string
 	t.Fatalf("handler %s not found", name)
 	return generatedHandler{}
 }
+
+func TestAnalyzeValueReceiverHandlersWithExternalStore(t *testing.T) {
+	_, handlers, err := analyzePackage(options{dir: "testdata/api", framework: "gin"})
+	require.NoError(t, err)
+
+	getAlias := findGeneratedHandler(t, handlers, "getAlias")
+	assert.Equal(t, http.StatusOK, getAlias.responseStatus)
+	assert.Contains(t, getAlias.response.Properties, "url_key")
+
+	putAlias := findGeneratedHandler(t, handlers, "putAlias")
+	assert.Contains(t, putAlias.request.Required, "url")
+	assert.Contains(t, putAlias.response.Properties, "name")
+
+	deleteAlias := findGeneratedHandler(t, handlers, "deleteAlias")
+	assert.Equal(t, http.StatusNoContent, deleteAlias.responseStatus)
+	assert.Empty(t, deleteAlias.response)
+
+	getRetention := findGeneratedHandler(t, handlers, "getRetention")
+	assert.Contains(t, getRetention.response.Properties, "keep_last")
+	putRetention := findGeneratedHandler(t, handlers, "putRetention")
+	assert.Contains(t, putRetention.request.Properties, "ttl_days")
+}

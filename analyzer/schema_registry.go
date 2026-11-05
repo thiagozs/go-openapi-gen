@@ -33,6 +33,15 @@ type HandlerSchema struct {
 	RequestSchema  spec.Schema
 	ResponseSchema spec.Schema
 	ResponseStatus int
+	// Parameters are query parameters discovered in the handler body.
+	Parameters []spec.Parameter
+	// RequestContentType and ResponseContentType override application/json.
+	RequestContentType  string
+	ResponseContentType string
+	// NoRequestBody marks handlers analyzed without any request payload.
+	NoRequestBody bool
+	// RequestBodyConsumed marks handlers that read a payload without an inferred schema.
+	RequestBodyConsumed bool
 }
 
 // NewSchemaRegistry creates a new schema registry

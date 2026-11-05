@@ -36,6 +36,7 @@ type generatedHandler struct {
 	request        spec.Schema
 	response       spec.Schema
 	responseStatus int
+	extras         analyzer.HandlerSchema // parameters, content types, no-body flag
 }
 
 func main() {
@@ -134,7 +135,9 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 			if !isFrameworkHandler(decl, pkg.TypesInfo, opts.framework) {
 				continue
 			}
-			requestType, responseType, responseExpr, responseStatus := typesFromHandler(decl, pkg.TypesInfo, opts.framework, bindHelpers, expressionResolver)
+			requestType, responseType, responseExpr, responseStatus, responseScore := typesFromHandler(
+				decl, pkg.TypesInfo, opts.framework, bindHelpers, expressionResolver,
+			)
 			handler := generatedHandler{name: decl.Name.Name, id: declarationHandlerID(pkg.PkgPath, decl), responseStatus: responseStatus}
 			if requestType != nil {
 				handler.request = schemaGenerator.GenerateSchemaFromGoType(requestType)
@@ -142,7 +145,18 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 			if responseType != nil {
 				handler.response = schemaGenerator.GenerateSchemaFromGoExpr(responseExpr, pkg.TypesInfo)
 			}
-			if !schemaSet(handler.request) && !schemaSet(handler.response) && handler.responseStatus == 0 {
+			extras := analyzer.HandlerSchema{
+				RequestSchema: handler.request, ResponseSchema: handler.response,
+				ResponseStatus: handler.responseStatus,
+			}
+			extras.ApplyContextUsageWithResponseScore(
+				analyzer.InspectContextUsage(decl.Body, pkg.TypesInfo), responseScore, responseType != nil,
+			)
+			handler.extras = extras
+			handler.request, handler.response = extras.RequestSchema, extras.ResponseSchema
+			handler.responseStatus = extras.ResponseStatus
+			if !schemaSet(handler.request) && !schemaSet(handler.response) && handler.responseStatus == 0 &&
+				len(extras.Parameters) == 0 && !extras.NoRequestBody && !extras.RequestBodyConsumed {
 				continue
 			}
 			if _, exists := byID[handler.id]; exists {
@@ -230,7 +244,7 @@ func isHertzHandler(decl *ast.FuncDecl, info *types.Info) bool {
 		named.Obj().Name() == "RequestContext"
 }
 
-func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bindHelpers map[*types.Func]int, resolver *expressionResolver) (types.Type, types.Type, ast.Expr, int) {
+func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bindHelpers map[*types.Func]int, resolver *expressionResolver) (types.Type, types.Type, ast.Expr, int, int) {
 	var requestType types.Type
 	var responseType types.Type
 	var responseExpr ast.Expr
@@ -276,7 +290,7 @@ func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bi
 		}
 		return true
 	})
-	return requestType, responseType, responseExpr, responseStatus
+	return requestType, responseType, responseExpr, responseStatus, bestResponseScore
 }
 
 type expressionSource struct {
@@ -415,7 +429,13 @@ func (r *expressionResolver) resolveWithVisited(expr ast.Expr, resultIndex int, 
 			return expr
 		}
 		visited[variable] = true
-		return r.resolveWithVisited(source.expr, source.resultIndex, visited)
+		resolved := r.resolveWithVisited(source.expr, source.resultIndex, visited)
+		// A multi-value call that could not be followed has a tuple type;
+		// the variable itself already carries the matching element type.
+		if _, isTuple := r.info.TypeOf(resolved).(*types.Tuple); isTuple {
+			return expr
+		}
+		return resolved
 	case *ast.CallExpr:
 		function, ok := calledFunction(value.Fun, r.info)
 		if !ok || visited[function] {
@@ -621,6 +641,10 @@ func renderGeneratedFile(packageName string, handlers []generatedHandler) ([]byt
 	output.WriteString("\tvar schema openapispec.Schema\n")
 	output.WriteString("\tif err := json.Unmarshal([]byte(raw), &schema); err != nil {\n")
 	output.WriteString("\t\tpanic(err)\n\t}\n\treturn schema\n}\n\n")
+	output.WriteString("func openapiGeneratedParameters(raw string) []openapispec.Parameter {\n")
+	output.WriteString("\tvar parameters []openapispec.Parameter\n")
+	output.WriteString("\tif err := json.Unmarshal([]byte(raw), &parameters); err != nil {\n")
+	output.WriteString("\t\tpanic(err)\n\t}\n\treturn parameters\n}\n\n")
 	output.WriteString("func init() {\n")
 	for _, handler := range handlers {
 		requestJSON, err := json.Marshal(handler.request)
@@ -635,6 +659,25 @@ func renderGeneratedFile(packageName string, handlers []generatedHandler) ([]byt
 		fmt.Fprintf(&output, "\t\tRequestSchema: openapiGeneratedSchema(%s),\n", strconv.Quote(string(requestJSON)))
 		fmt.Fprintf(&output, "\t\tResponseSchema: openapiGeneratedSchema(%s),\n", strconv.Quote(string(responseJSON)))
 		fmt.Fprintf(&output, "\t\tResponseStatus: %d,\n", handler.responseStatus)
+		if len(handler.extras.Parameters) > 0 {
+			parametersJSON, err := json.Marshal(handler.extras.Parameters)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Fprintf(&output, "\t\tParameters: openapiGeneratedParameters(%s),\n", strconv.Quote(string(parametersJSON)))
+		}
+		if handler.extras.RequestContentType != "" {
+			fmt.Fprintf(&output, "\t\tRequestContentType: %q,\n", handler.extras.RequestContentType)
+		}
+		if handler.extras.ResponseContentType != "" {
+			fmt.Fprintf(&output, "\t\tResponseContentType: %q,\n", handler.extras.ResponseContentType)
+		}
+		if handler.extras.NoRequestBody {
+			output.WriteString("\t\tNoRequestBody: true,\n")
+		}
+		if handler.extras.RequestBodyConsumed {
+			output.WriteString("\t\tRequestBodyConsumed: true,\n")
+		}
 		output.WriteString("\t})\n")
 	}
 	output.WriteString("}\n")

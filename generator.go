@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -215,6 +216,13 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 		handlerSchema.ResponseSchema = *metadata.ResponseSchema
 	}
 
+	if metadata.RequestContentType != "" {
+		handlerSchema.RequestContentType = metadata.RequestContentType
+	}
+	if metadata.ResponseContentType != "" {
+		handlerSchema.ResponseContentType = metadata.ResponseContentType
+	}
+
 	// Methods without request bodies must not publish fallback request schemas.
 	if !g.hasRequestBody(route.Method) && metadata.RequestSchema == nil {
 		handlerSchema.RequestSchema = spec.Schema{}
@@ -235,7 +243,7 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 	tags[metadata.Tags] = true
 
 	// Create OpenAPI operation
-	operation := g.createOperation(route, metadata)
+	operation := g.createOperation(route, metadata, handlerSchema)
 
 	// Add to spec
 	g.addOperationToSpec(route.Method, route.Path, operation)
@@ -244,7 +252,7 @@ func (g *Generator) processRoute(route spec.RouteInfo, tags map[string]bool) err
 }
 
 func handlerSchemaIsSet(schema analyzer.HandlerSchema) bool {
-	return schema.ResponseStatus != 0 || schemaIsSet(schema.RequestSchema) || schemaIsSet(schema.ResponseSchema)
+	return schema.IsSet()
 }
 
 func schemaIsSet(schema spec.Schema) bool {
@@ -306,19 +314,20 @@ func (g *Generator) tryFallbackSchemaMatching(route spec.RouteInfo) analyzer.Han
 }
 
 // createOperation creates an OpenAPI operation from route information
-func (g *Generator) createOperation(route spec.RouteInfo, metadata RouteMetadata) spec.Operation {
+func (g *Generator) createOperation(route spec.RouteInfo, metadata RouteMetadata, handlerSchema analyzer.HandlerSchema) spec.Operation {
 	operation := spec.Operation{
 		Tags:        []string{metadata.Tags},
 		Summary:     metadata.Summary,
 		Description: metadata.Description,
 		OperationID: g.generateOperationID(route.Method, route.Path),
-		Parameters:  g.extractParameters(route.Path),
-		Responses:   g.generateResponses(route),
+		Parameters:  mergeParameters(g.extractParameters(route.Path), handlerSchema.Parameters, metadata.Parameters),
+		Responses:   g.generateResponses(route, handlerSchema.ResponseContentType),
 	}
 
-	// Add request body for methods that typically have one
-	if g.hasRequestBody(route.Method) {
-		requestBody := g.generateRequestBodyFromRoute(route)
+	// Add request body for methods that typically have one, unless the handler
+	// was analyzed and reads no payload (e.g. logout or rerun actions).
+	if g.hasRequestBody(route.Method) && !(handlerSchema.NoRequestBody && !schemaIsSet(handlerSchema.RequestSchema)) {
+		requestBody := g.generateRequestBodyFromRoute(route, handlerSchema.RequestContentType)
 		operation.RequestBody = &requestBody
 	}
 
@@ -371,7 +380,7 @@ func (g *Generator) extractParameters(path string) []spec.Parameter {
 }
 
 // generateResponses generates responses using dynamic schema resolution
-func (g *Generator) generateResponses(route spec.RouteInfo) map[string]spec.Response {
+func (g *Generator) generateResponses(route spec.RouteInfo, contentType string) map[string]spec.Response {
 	responses := make(map[string]spec.Response)
 
 	statusCode := http.StatusOK
@@ -393,13 +402,13 @@ func (g *Generator) generateResponses(route spec.RouteInfo) map[string]spec.Resp
 	if statusCode != http.StatusNoContent {
 		if hasSchema {
 			successResponse.Content = map[string]spec.MediaType{
-				"application/json": {
+				mediaTypeOrJSON(contentType): {
 					Schema: g.generateSchemaReference(route.Method, route.Path, "response"),
 				},
 			}
 		} else if !statusRegistered {
 			successResponse.Content = map[string]spec.MediaType{
-				"application/json": {
+				mediaTypeOrJSON(contentType): {
 					Schema: spec.Schema{
 						Type: "object",
 						Properties: map[string]spec.Schema{
@@ -488,7 +497,7 @@ func (g *Generator) getErrorSchema() spec.Schema {
 }
 
 // generateRequestBodyFromRoute generates request body using dynamic schema resolution
-func (g *Generator) generateRequestBodyFromRoute(route spec.RouteInfo) spec.RequestBody {
+func (g *Generator) generateRequestBodyFromRoute(route spec.RouteInfo, contentType string) spec.RequestBody {
 	// Get request schema from registry
 	var schema spec.Schema
 	if _, exists := g.schemaRegistry.GetRequestSchema(route.Method, route.Path); exists {
@@ -507,7 +516,7 @@ func (g *Generator) generateRequestBodyFromRoute(route spec.RouteInfo) spec.Requ
 	return spec.RequestBody{
 		Required: true,
 		Content: map[string]spec.MediaType{
-			"application/json": {
+			mediaTypeOrJSON(contentType): {
 				Schema: schema,
 			},
 		},
@@ -628,7 +637,13 @@ func (g *Generator) addOperationToSpec(method, path string, operation spec.Opera
 func (g *Generator) generateTagsFromSet(tags map[string]bool) []spec.Tag {
 	var result []spec.Tag
 
+	names := make([]string, 0, len(tags))
 	for tagName := range tags {
+		names = append(names, tagName)
+	}
+	sort.Strings(names)
+
+	for _, tagName := range names {
 		tag := spec.Tag{
 			Name:        tagName,
 			Description: g.generateTagDescription(tagName),
@@ -641,6 +656,9 @@ func (g *Generator) generateTagsFromSet(tags map[string]bool) []spec.Tag {
 
 // generateTagDescription generates description for a tag
 func (g *Generator) generateTagDescription(tagName string) string {
+	if desc, exists := g.overrideManager.TagDescription(tagName); exists {
+		return desc
+	}
 	descriptions := map[string]string{
 		"auth":              "User authentication and session management",
 		"authentication":    "User authentication and session management",
@@ -792,4 +810,30 @@ func (g *Generator) generateSwaggerHTML() string {
     </script>
 </body>
 </html>`
+}
+
+func mediaTypeOrJSON(contentType string) string {
+	if contentType == "" {
+		return analyzer.ContentTypeJSON
+	}
+	return contentType
+}
+
+// mergeParameters combines parameter lists; later lists win for the same
+// name and location, so route metadata overrides discovered parameters.
+func mergeParameters(lists ...[]spec.Parameter) []spec.Parameter {
+	var merged []spec.Parameter
+	index := make(map[string]int)
+	for _, list := range lists {
+		for _, param := range list {
+			key := param.In + ":" + param.Name
+			if position, exists := index[key]; exists {
+				merged[position] = param
+				continue
+			}
+			index[key] = len(merged)
+			merged = append(merged, param)
+		}
+	}
+	return merged
 }

@@ -14,12 +14,18 @@ type RouteMetadata struct {
 	Description    string       `json:"description,omitempty"`
 	RequestSchema  *spec.Schema `json:"requestSchema,omitempty"`
 	ResponseSchema *spec.Schema `json:"responseSchema,omitempty"`
+	// Parameters adds or replaces operation parameters (e.g. query params).
+	Parameters []spec.Parameter `json:"parameters,omitempty"`
+	// RequestContentType and ResponseContentType replace application/json.
+	RequestContentType  string `json:"requestContentType,omitempty"`
+	ResponseContentType string `json:"responseContentType,omitempty"`
 }
 
 // OverrideManager manages custom metadata overrides
 type OverrideManager struct {
 	pathOverrides    map[string]RouteMetadata // Exact path matches
 	tagOverrides     map[string][]string      // Tag-level overrides
+	tagDescriptions  map[string]string        // Tag descriptions by final tag name
 	patternOverrides []PatternOverride        // Pattern-based overrides
 }
 
@@ -48,6 +54,21 @@ func (om *OverrideManager) Override(method, path string, metadata RouteMetadata)
 // OverrideTags sets custom tag for a specific tag
 func (om *OverrideManager) OverrideTags(originalTag string, newTag string) {
 	om.tagOverrides[originalTag] = []string{newTag}
+}
+
+// OverrideTagDescription sets the description published for a tag in the
+// top-level tags list. Use the final tag name (after OverrideTags).
+func (om *OverrideManager) OverrideTagDescription(tag, description string) {
+	if om.tagDescriptions == nil {
+		om.tagDescriptions = make(map[string]string)
+	}
+	om.tagDescriptions[tag] = description
+}
+
+// TagDescription returns the configured description for a tag, if any.
+func (om *OverrideManager) TagDescription(tag string) (string, bool) {
+	description, exists := om.tagDescriptions[tag]
+	return description, exists
 }
 
 // OverridePattern sets custom metadata for paths matching a pattern
@@ -130,6 +151,15 @@ func (om *OverrideManager) mergeMetadata(result *RouteMetadata, override RouteMe
 	}
 	if override.ResponseSchema != nil {
 		result.ResponseSchema = override.ResponseSchema
+	}
+	if len(override.Parameters) > 0 {
+		result.Parameters = mergeParameters(result.Parameters, override.Parameters)
+	}
+	if override.RequestContentType != "" {
+		result.RequestContentType = override.RequestContentType
+	}
+	if override.ResponseContentType != "" {
+		result.ResponseContentType = override.ResponseContentType
 	}
 }
 

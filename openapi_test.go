@@ -308,3 +308,140 @@ func TestTagOverrides(t *testing.T) {
 
 	assert.Equal(t, "authentication", metadata.Tags)
 }
+
+func TestFormQueryAndContentTypesAreDocumented(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	pages := &testfixtures.PageHandler{}
+	engine.POST("/login", pages.Login)
+	engine.POST("/logout", pages.Logout)
+	engine.POST("/bound-upload", pages.BoundUpload)
+	engine.POST("/raw-body", pages.RawBody)
+	engine.POST("/dynamic-form", pages.DynamicPostForm)
+	engine.GET("/report", pages.Report)
+
+	options := &Options{}
+	WithConfig(NewDevelopmentConfig())(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+	generator.GetOverrideManager().Override("GET", "/report", RouteMetadata{
+		Parameters: []spec.Parameter{{Name: "refresh", In: "query", Description: "Force refresh", Schema: spec.Schema{Type: "boolean"}}},
+	})
+
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+
+	login := document.Paths["/login"].Post
+	require.NotNil(t, login)
+	require.NotNil(t, login.RequestBody)
+	assert.Contains(t, login.RequestBody.Content, "application/x-www-form-urlencoded")
+	assert.NotContains(t, login.RequestBody.Content, "application/json")
+	assert.Contains(t, document.Components.Schemas["POST_loginrequest"].Properties, "username")
+	require.Len(t, login.Parameters, 1)
+	assert.Equal(t, "next", login.Parameters[0].Name)
+	assert.Equal(t, "query", login.Parameters[0].In)
+	assert.Contains(t, login.Responses["200"].Content, "text/html")
+
+	assert.Nil(t, document.Paths["/logout"].Post.RequestBody)
+
+	boundUpload := document.Paths["/bound-upload"].Post
+	require.NotNil(t, boundUpload.RequestBody)
+	assert.Contains(t, boundUpload.RequestBody.Content, "multipart/form-data")
+	assert.Contains(t, document.Components.Schemas["POST_bound-uploadrequest"].Properties, "name")
+	assert.NotNil(t, document.Paths["/raw-body"].Post.RequestBody)
+	assert.NotNil(t, document.Paths["/dynamic-form"].Post.RequestBody)
+
+	report := document.Paths["/report"].Get
+	require.NotNil(t, report)
+	assert.Contains(t, report.Responses["200"].Content, "text/markdown")
+	require.Len(t, report.Parameters, 1)
+	assert.Equal(t, "Force refresh", report.Parameters[0].Description)
+	assert.Equal(t, "boolean", report.Parameters[0].Schema.Type)
+}
+
+func TestSuccessfulNonJSONResponseWinsOverErrorJSON(t *testing.T) {
+	schema := integration.NewGinHandlerAnalyzer().AnalyzeHandler((&testfixtures.PageHandler{}).MixedResponse)
+	assert.Equal(t, 201, schema.ResponseStatus)
+	assert.Equal(t, "text/html", schema.ResponseContentType)
+	assert.Equal(t, "string", schema.ResponseSchema.Type)
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/mixed-response", (&testfixtures.PageHandler{}).MixedResponse)
+	options := &Options{}
+	WithConfig(NewDevelopmentConfig())(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+	response := document.Paths["/mixed-response"].Post.Responses["201"]
+	require.Contains(t, response.Content, "text/html")
+	assert.Equal(t, "string", document.Components.Schemas["POST_mixed-responseresponse"].Type)
+}
+
+func TestMetadataContentTypeOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/signin", (&testfixtures.PageHandler{}).Login)
+	engine.GET("/export", func(c *gin.Context) {
+		_, _ = c.Writer.Write([]byte("csv"))
+	})
+
+	options := &Options{}
+	WithConfig(NewDevelopmentConfig())(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+	generator.GetOverrideManager().Override("POST", "/signin", RouteMetadata{
+		RequestContentType:  "application/xml",
+		ResponseContentType: "application/xml",
+	})
+	generator.GetOverrideManager().Override("GET", "/export", RouteMetadata{
+		ResponseContentType: "text/csv",
+	})
+
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+	operation := document.Paths["/signin"].Post
+	require.NotNil(t, operation.RequestBody)
+	assert.Contains(t, operation.RequestBody.Content, "application/xml")
+	assert.Contains(t, operation.Responses["200"].Content, "application/xml")
+	assert.Contains(t, document.Paths["/export"].Get.Responses["200"].Content, "text/csv")
+}
+
+func TestSummariesTagsAndTagDescriptions(t *testing.T) {
+	pathParser := parser.NewPathParser()
+
+	list := pathParser.ParseRoute("GET", "/admin/jobs")
+	item := pathParser.ParseRoute("GET", "/admin/jobs/:id")
+	assert.Equal(t, "admin-jobs", list.Tag)
+	assert.Equal(t, "admin-jobs", item.Tag)
+	assert.Equal(t, "Get Admin Jobs", list.Summary)
+	assert.Equal(t, "Get Admin Jobs By Id", item.Summary)
+	assert.Contains(t, item.Description, "GET /admin/jobs/:id")
+	assert.Equal(t, "admin", pathParser.ParseRoute("GET", "/admin").Tag)
+	assert.Equal(t, "healthz", pathParser.ParseRoute("GET", "/healthz").Tag)
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.GET("/admin/jobs", func(c *gin.Context) {})
+	options := &Options{}
+	WithConfig(NewDevelopmentConfig())(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+	generator.GetOverrideManager().OverrideTagDescription("admin-jobs", "Background job administration")
+
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+	require.Len(t, document.Tags, 1)
+	assert.Equal(t, "Background job administration", document.Tags[0].Description)
+}
+
+func TestTagsOmitEmptyExternalDocs(t *testing.T) {
+	data, err := json.Marshal(spec.Tag{Name: "payments"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "externalDocs")
+}

@@ -61,3 +61,44 @@ func (h *PaymentHandler) Delete(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+// PageHandler serves HTML/form/markdown endpoints.
+type PageHandler struct{}
+
+func (h *PageHandler) Login(c *gin.Context) {
+	_ = c.PostForm("username")
+	_ = c.Query("next")
+	c.HTML(http.StatusOK, "login.html", nil)
+}
+
+func (h *PageHandler) Logout(c *gin.Context) {
+	c.Status(http.StatusNoContent)
+}
+
+func (h *PageHandler) Report(c *gin.Context) {
+	_ = c.DefaultQuery("refresh", "false")
+	c.Data(http.StatusOK, "text/markdown; charset=utf-8", nil)
+}
+
+func (h *PageHandler) BoundUpload(c *gin.Context) {
+	var input struct {
+		Name string `form:"name"`
+	}
+	_ = c.ShouldBind(&input)
+	_, _ = c.FormFile("file")
+}
+
+func (h *PageHandler) MixedResponse(c *gin.Context) {
+	c.String(http.StatusBadRequest, "invalid")
+	c.JSON(http.StatusBadRequest, gin.H{"error": "invalid"})
+	c.HTML(http.StatusCreated, "created", nil)
+}
+
+func (h *PageHandler) RawBody(c *gin.Context) {
+	_, _ = c.GetRawData()
+}
+
+func (h *PageHandler) DynamicPostForm(c *gin.Context) {
+	field := c.Query("field")
+	_ = c.PostForm(field)
+}

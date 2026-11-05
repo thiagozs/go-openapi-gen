@@ -284,7 +284,7 @@ func (h *HertzHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Hand
 	handlerValue := reflect.ValueOf(handler)
 	if handlerValue.IsValid() && handlerValue.Kind() == reflect.Func &&
 		h.isASTAnalysisEnabled() && !h.isProductionMode() {
-		if astSchema := h.analyzeHandlerSource(handlerValue); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" || astSchema.ResponseStatus != 0 {
+		if astSchema := h.analyzeHandlerSource(handlerValue); astSchema.IsSet() {
 			return astSchema
 		}
 	}
@@ -307,7 +307,7 @@ func (h *HertzHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Hand
 
 	// Second, try AST analysis (only if enabled and source files are available)
 	if h.isASTAnalysisEnabled() && !h.isProductionMode() && h.areSourceFilesAvailable() {
-		if astSchema := h.tryASTAnalysis(handler); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" || astSchema.ResponseStatus != 0 {
+		if astSchema := h.tryASTAnalysis(handler); astSchema.IsSet() {
 			return astSchema
 		}
 	}
@@ -425,6 +425,9 @@ func (h *HertzHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info 
 	if responseType != nil {
 		schema.ResponseSchema = h.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoExpr(responseExpr, info)
 	}
+	schema.ApplyContextUsageWithResponseScore(
+		analyzer.InspectContextUsage(decl.Body, info), bestResponseScore, responseType != nil,
+	)
 	return schema
 }
 

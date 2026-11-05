@@ -27,6 +27,13 @@ A powerful, framework-agnostic OpenAPI documentation generator for Go web applic
 go get github.com/thiagozs/go-openapi-gen
 ```
 
+> **Go version:** this module declares `go 1.27.0`, so `go get` raises the
+> `go` directive of your module to 1.27.0. With Go 1.21+ and the default
+> `GOTOOLCHAIN=auto` the matching toolchain is downloaded automatically. If your
+> build uses an older image (e.g. `golang:1.26`) or `GOTOOLCHAIN=local`, either
+> upgrade the image to `golang:1.27` or pin the last release that supports your
+> toolchain (`go get github.com/thiagozs/go-openapi-gen@<version>`).
+
 ### Basic Usage
 
 #### CloudWeGo Hertz
@@ -334,6 +341,21 @@ err := openapi.EnableDocs(framework, httpServer,
     }),
 )
 ```
+
+`RouteMetadata` can also add query parameters and replace the default
+`application/json` media types:
+
+```go
+om.Override("GET", "/report", openapi.RouteMetadata{
+    Parameters:          []spec.Parameter{{Name: "refresh", In: "query", Schema: spec.Schema{Type: "boolean"}}},
+    ResponseContentType: "text/markdown",
+})
+```
+
+Handlers are also inspected for `c.Query`/`c.DefaultQuery` (query parameters),
+`c.PostForm`/`c.FormFile` (form or multipart request body) and
+`c.String`/`c.HTML`/`c.Data` (non-JSON responses). A handler that reads no
+payload gets no request body.
 
 ### Custom Framework Integration
 

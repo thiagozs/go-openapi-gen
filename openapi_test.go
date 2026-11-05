@@ -308,3 +308,102 @@ func TestTagOverrides(t *testing.T) {
 
 	assert.Equal(t, "authentication", metadata.Tags)
 }
+
+func TestFormQueryAndContentTypesAreDocumented(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	pages := &testfixtures.PageHandler{}
+	engine.POST("/login", pages.Login)
+	engine.POST("/logout", pages.Logout)
+	engine.GET("/report", pages.Report)
+
+	options := &Options{}
+	WithConfig(NewDevelopmentConfig())(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+	generator.GetOverrideManager().Override("GET", "/report", RouteMetadata{
+		Parameters: []spec.Parameter{{Name: "refresh", In: "query", Description: "Force refresh", Schema: spec.Schema{Type: "boolean"}}},
+	})
+
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+
+	login := document.Paths["/login"].Post
+	require.NotNil(t, login)
+	require.NotNil(t, login.RequestBody)
+	assert.Contains(t, login.RequestBody.Content, "application/x-www-form-urlencoded")
+	assert.NotContains(t, login.RequestBody.Content, "application/json")
+	assert.Contains(t, document.Components.Schemas["POST_loginrequest"].Properties, "username")
+	require.Len(t, login.Parameters, 1)
+	assert.Equal(t, "next", login.Parameters[0].Name)
+	assert.Equal(t, "query", login.Parameters[0].In)
+	assert.Contains(t, login.Responses["200"].Content, "text/html")
+
+	assert.Nil(t, document.Paths["/logout"].Post.RequestBody)
+
+	report := document.Paths["/report"].Get
+	require.NotNil(t, report)
+	assert.Contains(t, report.Responses["200"].Content, "text/markdown")
+	require.Len(t, report.Parameters, 1)
+	assert.Equal(t, "Force refresh", report.Parameters[0].Description)
+	assert.Equal(t, "boolean", report.Parameters[0].Schema.Type)
+}
+
+func TestMetadataContentTypeOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/signin", (&testfixtures.PageHandler{}).Login)
+
+	options := &Options{}
+	WithConfig(NewDevelopmentConfig())(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+	generator.GetOverrideManager().Override("POST", "/signin", RouteMetadata{
+		RequestContentType:  "application/xml",
+		ResponseContentType: "application/xml",
+	})
+
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+	operation := document.Paths["/signin"].Post
+	require.NotNil(t, operation.RequestBody)
+	assert.Contains(t, operation.RequestBody.Content, "application/xml")
+	assert.Contains(t, operation.Responses["200"].Content, "application/xml")
+}
+
+func TestSummariesTagsAndTagDescriptions(t *testing.T) {
+	pathParser := parser.NewPathParser()
+
+	list := pathParser.ParseRoute("GET", "/admin/jobs")
+	item := pathParser.ParseRoute("GET", "/admin/jobs/:id")
+	assert.Equal(t, "admin-jobs", list.Tag)
+	assert.Equal(t, "admin-jobs", item.Tag)
+	assert.Equal(t, "Get Admin Jobs", list.Summary)
+	assert.Equal(t, "Get Admin Jobs By Id", item.Summary)
+	assert.Contains(t, item.Description, "GET /admin/jobs/:id")
+	assert.Equal(t, "admin", pathParser.ParseRoute("GET", "/admin").Tag)
+	assert.Equal(t, "healthz", pathParser.ParseRoute("GET", "/healthz").Tag)
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.GET("/admin/jobs", func(c *gin.Context) {})
+	options := &Options{}
+	WithConfig(NewDevelopmentConfig())(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+	generator.GetOverrideManager().OverrideTagDescription("admin-jobs", "Background job administration")
+
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+	require.Len(t, document.Tags, 1)
+	assert.Equal(t, "Background job administration", document.Tags[0].Description)
+}
+
+func TestTagsOmitEmptyExternalDocs(t *testing.T) {
+	data, err := json.Marshal(spec.Tag{Name: "payments"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "externalDocs")
+}

@@ -61,3 +61,21 @@ func (h *PaymentHandler) Delete(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+// PageHandler serves HTML/form/markdown endpoints.
+type PageHandler struct{}
+
+func (h *PageHandler) Login(c *gin.Context) {
+	_ = c.PostForm("username")
+	_ = c.Query("next")
+	c.HTML(http.StatusOK, "login.html", nil)
+}
+
+func (h *PageHandler) Logout(c *gin.Context) {
+	c.Status(http.StatusNoContent)
+}
+
+func (h *PageHandler) Report(c *gin.Context) {
+	_ = c.DefaultQuery("refresh", "false")
+	c.Data(http.StatusOK, "text/markdown; charset=utf-8", nil)
+}

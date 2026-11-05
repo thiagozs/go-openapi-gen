@@ -83,3 +83,43 @@ func (h *Handler) Delete(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+type store interface {
+	Get(id string) (CreateResponse, error)
+}
+
+// GetFromStore assigns a (T, error) tuple from an unresolvable call.
+func (h *Handler) GetFromStore(c *gin.Context) {
+	var s store
+	job, err := s.Get(c.Param("id"))
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	c.JSON(http.StatusOK, job)
+}
+
+// Login reads an HTML form and renders a page.
+func (h *Handler) Login(c *gin.Context) {
+	_ = c.PostForm("username")
+	_ = c.DefaultPostForm("remember", "false")
+	_ = c.Query("next")
+	c.HTML(http.StatusOK, "login.html", nil)
+}
+
+// Logout reads no payload at all.
+func (h *Handler) Logout(c *gin.Context) {
+	c.Status(http.StatusNoContent)
+}
+
+// Report writes markdown and reads a query parameter.
+func (h *Handler) Report(c *gin.Context) {
+	_ = c.DefaultQuery("refresh", "false")
+	c.Data(http.StatusOK, "text/markdown; charset=utf-8", nil)
+}
+
+// Upload receives a multipart file.
+func (h *Handler) Upload(c *gin.Context) {
+	_, _ = c.FormFile("file")
+	c.Status(http.StatusCreated)
+}

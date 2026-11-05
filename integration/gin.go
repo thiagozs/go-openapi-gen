@@ -273,7 +273,7 @@ func (g *GinHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Handle
 	handlerValue := reflect.ValueOf(handler)
 	if handlerValue.IsValid() && handlerValue.Kind() == reflect.Func &&
 		g.isASTAnalysisEnabled() && !g.isProductionMode() {
-		if astSchema := g.analyzeHandlerSource(handlerValue); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" || astSchema.ResponseStatus != 0 {
+		if astSchema := g.analyzeHandlerSource(handlerValue); astSchema.IsSet() {
 			return astSchema
 		}
 	}
@@ -296,7 +296,7 @@ func (g *GinHandlerAnalyzer) AnalyzeHandler(handler interface{}) analyzer.Handle
 
 	// Second, try AST analysis (only if enabled and source files are available)
 	if g.isASTAnalysisEnabled() && !g.isProductionMode() && g.areSourceFilesAvailable() {
-		if astSchema := g.tryASTAnalysis(handler); astSchema.RequestSchema.Type != "" || astSchema.ResponseSchema.Type != "" || astSchema.ResponseStatus != 0 {
+		if astSchema := g.tryASTAnalysis(handler); astSchema.IsSet() {
 			return astSchema
 		}
 	}
@@ -414,6 +414,7 @@ func (g *GinHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *t
 	if responseType != nil {
 		schema.ResponseSchema = g.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoExpr(responseExpr, info)
 	}
+	schema.ApplyContextUsage(analyzer.InspectContextUsage(decl.Body, info), responseType != nil)
 	return schema
 }
 

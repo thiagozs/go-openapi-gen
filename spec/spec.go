@@ -292,9 +292,9 @@ func (f OAuthFlow) MarshalJSON() ([]byte, error) {
 type SecurityRequirement map[string][]string
 
 type Tag struct {
-	Name         string       `json:"name"`
-	Description  string       `json:"description,omitempty"`
-	ExternalDocs ExternalDocs `json:"externalDocs,omitempty"`
+	Name         string        `json:"name"`
+	Description  string        `json:"description,omitempty"`
+	ExternalDocs *ExternalDocs `json:"externalDocs,omitempty"`
 }
 
 type ExternalDocs struct {

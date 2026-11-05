@@ -35,10 +35,15 @@ func (p *PathParser) ParseRoute(method, path string) ParsedRoute {
 	segments := p.extractMeaningfulSegments(path)
 	cleanPath := p.cleanPath(path)
 
+	summary := p.generateSummary(method, segments)
+	if param := p.trailingParam(path); param != "" {
+		summary += " By " + p.toTitleCase(param)
+	}
+
 	return ParsedRoute{
 		Tag:         p.generateTag(segments),
-		Summary:     p.generateSummary(method, segments),
-		Description: p.generateDescription(method, segments),
+		Summary:     summary,
+		Description: p.describeRoute(method, path, summary),
 		Segments:    segments,
 		CleanPath:   cleanPath,
 	}
@@ -108,10 +113,41 @@ func (p *PathParser) cleanPath(path string) string {
 	return cleaned
 }
 
+// containerSegments are generic first segments (panels, namespaces) that say
+// nothing about the resource; the next segment is appended to the tag.
+var containerSegments = map[string]bool{
+	"admin": true, "internal": true, "panel": true, "dashboard": true,
+	"manage": true, "console": true, "public": true, "web": true, "ui": true,
+}
+
+// trailingParam returns the name of a path parameter that ends the path
+// (e.g. "id" for /jobs/:id), or "" when the path does not end with one.
+func (p *PathParser) trailingParam(path string) string {
+	segments := strings.Split(strings.Trim(path, "/"), "/")
+	last := segments[len(segments)-1]
+	if strings.HasPrefix(last, ":") {
+		return last[1:]
+	}
+	if strings.HasPrefix(last, "{") && strings.HasSuffix(last, "}") {
+		return strings.Trim(last, "{}")
+	}
+	return ""
+}
+
+// describeRoute builds a description that is more specific than the summary.
+func (p *PathParser) describeRoute(method, path, summary string) string {
+	return summary + " operation for " + strings.ToUpper(method) + " " + path
+}
+
 // generateTag generates tag from segments using pure algorithm
 func (p *PathParser) generateTag(segments []string) string {
 	if len(segments) == 0 {
 		return "system"
+	}
+
+	if len(segments) > 1 && containerSegments[strings.ToLower(segments[0])] {
+		second := strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(segments[1]), "-", ""), "_", "")
+		return strings.ToLower(segments[0]) + "-" + second
 	}
 
 	// Use the first meaningful segment as tag

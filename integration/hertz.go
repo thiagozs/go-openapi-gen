@@ -425,7 +425,9 @@ func (h *HertzHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info 
 	if responseType != nil {
 		schema.ResponseSchema = h.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoExpr(responseExpr, info)
 	}
-	schema.ApplyContextUsage(analyzer.InspectContextUsage(decl.Body, info), responseType != nil)
+	schema.ApplyContextUsageWithResponseScore(
+		analyzer.InspectContextUsage(decl.Body, info), bestResponseScore, responseType != nil,
+	)
 	return schema
 }
 

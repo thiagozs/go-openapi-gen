@@ -414,7 +414,9 @@ func (g *GinHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *t
 	if responseType != nil {
 		schema.ResponseSchema = g.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoExpr(responseExpr, info)
 	}
-	schema.ApplyContextUsage(analyzer.InspectContextUsage(decl.Body, info), responseType != nil)
+	schema.ApplyContextUsageWithResponseScore(
+		analyzer.InspectContextUsage(decl.Body, info), bestResponseScore, responseType != nil,
+	)
 	return schema
 }
 

@@ -135,7 +135,9 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 			if !isFrameworkHandler(decl, pkg.TypesInfo, opts.framework) {
 				continue
 			}
-			requestType, responseType, responseExpr, responseStatus := typesFromHandler(decl, pkg.TypesInfo, opts.framework, bindHelpers, expressionResolver)
+			requestType, responseType, responseExpr, responseStatus, responseScore := typesFromHandler(
+				decl, pkg.TypesInfo, opts.framework, bindHelpers, expressionResolver,
+			)
 			handler := generatedHandler{name: decl.Name.Name, id: declarationHandlerID(pkg.PkgPath, decl), responseStatus: responseStatus}
 			if requestType != nil {
 				handler.request = schemaGenerator.GenerateSchemaFromGoType(requestType)
@@ -143,12 +145,18 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 			if responseType != nil {
 				handler.response = schemaGenerator.GenerateSchemaFromGoExpr(responseExpr, pkg.TypesInfo)
 			}
-			extras := analyzer.HandlerSchema{RequestSchema: handler.request, ResponseSchema: handler.response}
-			extras.ApplyContextUsage(analyzer.InspectContextUsage(decl.Body, pkg.TypesInfo), responseType != nil)
+			extras := analyzer.HandlerSchema{
+				RequestSchema: handler.request, ResponseSchema: handler.response,
+				ResponseStatus: handler.responseStatus,
+			}
+			extras.ApplyContextUsageWithResponseScore(
+				analyzer.InspectContextUsage(decl.Body, pkg.TypesInfo), responseScore, responseType != nil,
+			)
 			handler.extras = extras
 			handler.request, handler.response = extras.RequestSchema, extras.ResponseSchema
+			handler.responseStatus = extras.ResponseStatus
 			if !schemaSet(handler.request) && !schemaSet(handler.response) && handler.responseStatus == 0 &&
-				len(extras.Parameters) == 0 && !extras.NoRequestBody {
+				len(extras.Parameters) == 0 && !extras.NoRequestBody && !extras.RequestBodyConsumed {
 				continue
 			}
 			if _, exists := byID[handler.id]; exists {
@@ -236,7 +244,7 @@ func isHertzHandler(decl *ast.FuncDecl, info *types.Info) bool {
 		named.Obj().Name() == "RequestContext"
 }
 
-func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bindHelpers map[*types.Func]int, resolver *expressionResolver) (types.Type, types.Type, ast.Expr, int) {
+func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bindHelpers map[*types.Func]int, resolver *expressionResolver) (types.Type, types.Type, ast.Expr, int, int) {
 	var requestType types.Type
 	var responseType types.Type
 	var responseExpr ast.Expr
@@ -282,7 +290,7 @@ func typesFromHandler(decl *ast.FuncDecl, info *types.Info, framework string, bi
 		}
 		return true
 	})
-	return requestType, responseType, responseExpr, responseStatus
+	return requestType, responseType, responseExpr, responseStatus, bestResponseScore
 }
 
 type expressionSource struct {
@@ -666,6 +674,9 @@ func renderGeneratedFile(packageName string, handlers []generatedHandler) ([]byt
 		}
 		if handler.extras.NoRequestBody {
 			output.WriteString("\t\tNoRequestBody: true,\n")
+		}
+		if handler.extras.RequestBodyConsumed {
+			output.WriteString("\t\tRequestBodyConsumed: true,\n")
 		}
 		output.WriteString("\t})\n")
 	}

@@ -12,13 +12,13 @@ import (
 func TestAnalyzePackageAndRender(t *testing.T) {
 	packageName, handlers, err := analyzePackage(options{dir: "testdata/sample", framework: "gin"})
 	require.NoError(t, err)
-	require.Len(t, handlers, 12)
+	require.Len(t, handlers, 17)
 	assert.Equal(t, "sample", packageName)
-	assert.Equal(t, "Create", handlers[0].name)
-	assert.Contains(t, handlers[0].request.Properties, "amount")
-	assert.Contains(t, handlers[0].request.Required, "amount")
-	assert.Contains(t, handlers[0].response.Properties, "id")
-	assert.Equal(t, http.StatusCreated, handlers[0].responseStatus)
+	create := findGeneratedHandler(t, handlers, "Create")
+	assert.Contains(t, create.request.Properties, "amount")
+	assert.Contains(t, create.request.Required, "amount")
+	assert.Contains(t, create.response.Properties, "id")
+	assert.Equal(t, http.StatusCreated, create.responseStatus)
 
 	createWithHelper := findGeneratedHandler(t, handlers, "CreateWithHelper")
 	assert.Contains(t, createWithHelper.request.Properties, "amount")
@@ -67,10 +67,28 @@ func TestAnalyzeFormQueryAndContentTypes(t *testing.T) {
 	assert.Equal(t, "multipart/form-data", upload.extras.RequestContentType)
 	assert.Equal(t, "binary", upload.request.Properties["file"].Format)
 
+	formatResponse := findGeneratedHandler(t, handlers, "FormatResponse")
+	assert.Equal(t, http.StatusCreated, formatResponse.responseStatus)
+	assert.Equal(t, "string", formatResponse.response.Type)
+	assert.Equal(t, "text/html", formatResponse.extras.ResponseContentType)
+	assert.Equal(t, http.StatusCreated, formatResponse.extras.ResponseStatus)
+
+	boundUpload := findGeneratedHandler(t, handlers, "BoundUpload")
+	assert.Equal(t, "multipart/form-data", boundUpload.extras.RequestContentType)
+	assert.Contains(t, boundUpload.request.Properties, "amount")
+
+	for _, name := range []string{"DynamicPostForm", "RawBody", "DirectBody"} {
+		handler := findGeneratedHandler(t, handlers, name)
+		assert.False(t, handler.extras.NoRequestBody, name)
+		assert.True(t, handler.extras.RequestBodyConsumed, name)
+	}
+
 	rendered, err := renderGeneratedFile("sample", handlers)
 	require.NoError(t, err)
 	assert.Regexp(t, `NoRequestBody:\s+true`, string(rendered))
+	assert.Regexp(t, `RequestBodyConsumed:\s+true`, string(rendered))
 	assert.Regexp(t, `ResponseContentType:\s+"text/markdown"`, string(rendered))
+	assert.Regexp(t, `ResponseStatus:\s+201`, string(rendered))
 }
 
 func TestAnalyzeHertzPackage(t *testing.T) {

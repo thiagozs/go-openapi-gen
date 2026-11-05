@@ -26,7 +26,10 @@ type ContextUsage struct {
 	FormFields          []string
 	FileFields          []string
 	ResponseContentType string
+	ResponseStatus      int
 	DelegatesContext    bool
+	ReadsRequestBody    bool
+	responseScore       int
 }
 
 var (
@@ -44,8 +47,15 @@ func InspectContextUsage(body *ast.BlockStmt, info *types.Info) ContextUsage {
 	seenQuery := map[string]bool{}
 	seenForm := map[string]bool{}
 	seenFile := map[string]bool{}
+	usage.responseScore = -1
 
 	ast.Inspect(body, func(node ast.Node) bool {
+		if selector, ok := node.(*ast.SelectorExpr); ok && selector.Sel.Name == "Body" {
+			request, ok := selector.X.(*ast.SelectorExpr)
+			if ok && request.Sel.Name == "Request" && isFrameworkContext(info.TypeOf(request.X)) {
+				usage.ReadsRequestBody = true
+			}
+		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -81,43 +91,83 @@ func inspectContextCall(method string, call *ast.CallExpr, info *types.Info, usa
 		}
 		usage.QueryParams = append(usage.QueryParams, param)
 	case formMethods[method]:
+		usage.ReadsRequestBody = true
 		if name, ok := constantString(call, 0, info); ok && !seenForm[name] {
 			seenForm[name] = true
 			usage.FormFields = append(usage.FormFields, name)
 		}
 	case method == "FormFile":
+		usage.ReadsRequestBody = true
 		if name, ok := constantString(call, 0, info); ok && !seenFile[name] {
 			seenFile[name] = true
 			usage.FileFields = append(usage.FileFields, name)
 		}
+	case method == "GetRawData":
+		usage.ReadsRequestBody = true
 	case method == "String":
-		usage.setResponseContentType("text/plain")
+		usage.setResponse(call, "text/plain", info)
 	case method == "HTML":
-		usage.setResponseContentType("text/html")
+		usage.setResponse(call, "text/html", info)
 	case method == "XML":
-		usage.setResponseContentType("application/xml")
+		usage.setResponse(call, "application/xml", info)
 	case method == "Data" && len(call.Args) >= 2:
 		if contentType, ok := constantString(call, 1, info); ok {
-			usage.setResponseContentType(contentType)
+			usage.setResponse(call, contentType, info)
 		}
 	}
 }
 
-func (u *ContextUsage) setResponseContentType(contentType string) {
-	if u.ResponseContentType == "" {
-		u.ResponseContentType = contentType
+func (u *ContextUsage) setResponse(call *ast.CallExpr, contentType string, info *types.Info) {
+	if len(call.Args) == 0 {
+		return
 	}
+	status, known := constantStatusCode(call.Args[0], info)
+	score := 100
+	if known {
+		if status < 200 || status >= 300 {
+			return
+		}
+		score = 200
+	}
+	if score <= u.responseScore {
+		return
+	}
+	u.responseScore = score
+	u.ResponseContentType = contentType
+	u.ResponseStatus = status
+}
+
+func constantStatusCode(expr ast.Expr, info *types.Info) (int, bool) {
+	value := info.Types[expr].Value
+	if value == nil {
+		return 0, false
+	}
+	status, exact := constant.Int64Val(value)
+	return int(status), exact
 }
 
 // ApplyContextUsage merges the detected context usage into the schema.
-// hasJSONResponse tells whether a JSON response body was already detected, in
-// which case non-JSON writes (typically error pages) are ignored.
-func (s *HandlerSchema) ApplyContextUsage(usage ContextUsage, hasJSONResponse bool) {
+// hasSuccessfulJSONResponse tells whether a successful JSON response was
+// already detected, in which case non-JSON writes are not selected.
+func (s *HandlerSchema) ApplyContextUsage(usage ContextUsage, hasSuccessfulJSONResponse bool) {
+	jsonResponseScore := -1
+	if hasSuccessfulJSONResponse {
+		jsonResponseScore = 200
+	}
+	s.applyContextUsage(usage, jsonResponseScore, schemaSet(s.ResponseSchema))
+}
+
+// ApplyContextUsageWithResponseScore selects a non-JSON response only when it
+// outranks the best JSON response candidate.
+func (s *HandlerSchema) ApplyContextUsageWithResponseScore(usage ContextUsage, jsonResponseScore int, hasJSONSchema bool) {
+	s.applyContextUsage(usage, jsonResponseScore, hasJSONSchema)
+}
+
+func (s *HandlerSchema) applyContextUsage(usage ContextUsage, jsonResponseScore int, hasJSONSchema bool) {
 	s.Parameters = append(s.Parameters, usage.QueryParams...)
 
-	if !schemaSet(s.RequestSchema) {
-		switch {
-		case len(usage.FileFields) > 0 || len(usage.FormFields) > 0:
+	if len(usage.FileFields) > 0 || len(usage.FormFields) > 0 {
+		if !schemaSet(s.RequestSchema) {
 			properties := make(map[string]spec.Schema, len(usage.FormFields)+len(usage.FileFields))
 			for _, name := range usage.FormFields {
 				properties[name] = spec.Schema{Type: "string"}
@@ -126,25 +176,30 @@ func (s *HandlerSchema) ApplyContextUsage(usage ContextUsage, hasJSONResponse bo
 				properties[name] = spec.Schema{Type: "string", Format: "binary"}
 			}
 			s.RequestSchema = spec.Schema{Type: "object", Properties: properties}
-			s.RequestContentType = ContentTypeForm
-			if len(usage.FileFields) > 0 {
-				s.RequestContentType = ContentTypeMultipart
-			}
-		case !usage.DelegatesContext:
-			s.NoRequestBody = true
+		}
+		s.RequestContentType = ContentTypeForm
+		if len(usage.FileFields) > 0 {
+			s.RequestContentType = ContentTypeMultipart
 		}
 	}
 
-	if !hasJSONResponse && !schemaSet(s.ResponseSchema) && usage.ResponseContentType != "" {
+	if !schemaSet(s.RequestSchema) {
+		s.NoRequestBody = !usage.ReadsRequestBody && !usage.DelegatesContext
+	}
+	s.RequestBodyConsumed = usage.ReadsRequestBody || usage.DelegatesContext
+
+	if usage.ResponseContentType != "" &&
+		(usage.responseScore > jsonResponseScore || usage.responseScore == jsonResponseScore && !hasJSONSchema) {
 		s.ResponseSchema = spec.Schema{Type: "string"}
 		s.ResponseContentType = mediaTypeOnly(usage.ResponseContentType)
+		s.ResponseStatus = usage.ResponseStatus
 	}
 }
 
 // IsSet reports whether the analysis produced any information.
 func (s HandlerSchema) IsSet() bool {
 	return s.ResponseStatus != 0 || schemaSet(s.RequestSchema) || schemaSet(s.ResponseSchema) ||
-		len(s.Parameters) > 0 || s.NoRequestBody
+		len(s.Parameters) > 0 || s.NoRequestBody || s.RequestBodyConsumed
 }
 
 func schemaSet(schema spec.Schema) bool {

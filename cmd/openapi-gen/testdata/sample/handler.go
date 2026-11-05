@@ -1,6 +1,7 @@
 package sample
 
 import (
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -122,4 +123,29 @@ func (h *Handler) Report(c *gin.Context) {
 func (h *Handler) Upload(c *gin.Context) {
 	_, _ = c.FormFile("file")
 	c.Status(http.StatusCreated)
+}
+
+func (h *Handler) FormatResponse(c *gin.Context) {
+	c.String(http.StatusBadRequest, "invalid")
+	c.JSON(http.StatusBadRequest, gin.H{"error": "invalid"})
+	c.HTML(http.StatusCreated, "created", nil)
+}
+
+func (h *Handler) BoundUpload(c *gin.Context) {
+	var request CreateRequest
+	_ = c.ShouldBind(&request)
+	_, _ = c.FormFile("file")
+}
+
+func (h *Handler) DynamicPostForm(c *gin.Context) {
+	field := c.Query("field")
+	_ = c.PostForm(field)
+}
+
+func (h *Handler) RawBody(c *gin.Context) {
+	_, _ = c.GetRawData()
+}
+
+func (h *Handler) DirectBody(c *gin.Context) {
+	_, _ = io.ReadAll(c.Request.Body)
 }

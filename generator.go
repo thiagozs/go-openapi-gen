@@ -408,7 +408,7 @@ func (g *Generator) generateResponses(route spec.RouteInfo, contentType string) 
 			}
 		} else if !statusRegistered {
 			successResponse.Content = map[string]spec.MediaType{
-				"application/json": {
+				mediaTypeOrJSON(contentType): {
 					Schema: spec.Schema{
 						Type: "object",
 						Properties: map[string]spec.Schema{

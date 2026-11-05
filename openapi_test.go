@@ -315,6 +315,9 @@ func TestFormQueryAndContentTypesAreDocumented(t *testing.T) {
 	pages := &testfixtures.PageHandler{}
 	engine.POST("/login", pages.Login)
 	engine.POST("/logout", pages.Logout)
+	engine.POST("/bound-upload", pages.BoundUpload)
+	engine.POST("/raw-body", pages.RawBody)
+	engine.POST("/dynamic-form", pages.DynamicPostForm)
 	engine.GET("/report", pages.Report)
 
 	options := &Options{}
@@ -342,6 +345,13 @@ func TestFormQueryAndContentTypesAreDocumented(t *testing.T) {
 
 	assert.Nil(t, document.Paths["/logout"].Post.RequestBody)
 
+	boundUpload := document.Paths["/bound-upload"].Post
+	require.NotNil(t, boundUpload.RequestBody)
+	assert.Contains(t, boundUpload.RequestBody.Content, "multipart/form-data")
+	assert.Contains(t, document.Components.Schemas["POST_bound-uploadrequest"].Properties, "name")
+	assert.NotNil(t, document.Paths["/raw-body"].Post.RequestBody)
+	assert.NotNil(t, document.Paths["/dynamic-form"].Post.RequestBody)
+
 	report := document.Paths["/report"].Get
 	require.NotNil(t, report)
 	assert.Contains(t, report.Responses["200"].Content, "text/markdown")
@@ -350,10 +360,34 @@ func TestFormQueryAndContentTypesAreDocumented(t *testing.T) {
 	assert.Equal(t, "boolean", report.Parameters[0].Schema.Type)
 }
 
+func TestSuccessfulNonJSONResponseWinsOverErrorJSON(t *testing.T) {
+	schema := integration.NewGinHandlerAnalyzer().AnalyzeHandler((&testfixtures.PageHandler{}).MixedResponse)
+	assert.Equal(t, 201, schema.ResponseStatus)
+	assert.Equal(t, "text/html", schema.ResponseContentType)
+	assert.Equal(t, "string", schema.ResponseSchema.Type)
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/mixed-response", (&testfixtures.PageHandler{}).MixedResponse)
+	options := &Options{}
+	WithConfig(NewDevelopmentConfig())(options)
+	WithLogger(&testLogger{})(options)
+	generator, err := NewGenerator(engine, integration.NewGinServerAdapter(engine), options)
+	require.NoError(t, err)
+	document, err := generator.GenerateSpec()
+	require.NoError(t, err)
+	response := document.Paths["/mixed-response"].Post.Responses["201"]
+	require.Contains(t, response.Content, "text/html")
+	assert.Equal(t, "string", document.Components.Schemas["POST_mixed-responseresponse"].Type)
+}
+
 func TestMetadataContentTypeOverrides(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	engine.POST("/signin", (&testfixtures.PageHandler{}).Login)
+	engine.GET("/export", func(c *gin.Context) {
+		_, _ = c.Writer.Write([]byte("csv"))
+	})
 
 	options := &Options{}
 	WithConfig(NewDevelopmentConfig())(options)
@@ -364,6 +398,9 @@ func TestMetadataContentTypeOverrides(t *testing.T) {
 		RequestContentType:  "application/xml",
 		ResponseContentType: "application/xml",
 	})
+	generator.GetOverrideManager().Override("GET", "/export", RouteMetadata{
+		ResponseContentType: "text/csv",
+	})
 
 	document, err := generator.GenerateSpec()
 	require.NoError(t, err)
@@ -371,6 +408,7 @@ func TestMetadataContentTypeOverrides(t *testing.T) {
 	require.NotNil(t, operation.RequestBody)
 	assert.Contains(t, operation.RequestBody.Content, "application/xml")
 	assert.Contains(t, operation.Responses["200"].Content, "application/xml")
+	assert.Contains(t, document.Paths["/export"].Get.Responses["200"].Content, "text/csv")
 }
 
 func TestSummariesTagsAndTagDescriptions(t *testing.T) {

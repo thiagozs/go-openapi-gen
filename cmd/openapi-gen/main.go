@@ -150,7 +150,7 @@ func analyzePackage(opts options) (string, []generatedHandler, error) {
 				ResponseStatus: handler.responseStatus,
 			}
 			extras.ApplyContextUsageWithResponseScore(
-				analyzer.InspectContextUsage(decl.Body, pkg.TypesInfo), responseScore, responseType != nil,
+				analyzer.InspectContextUsageIn(decl.Body, pkg.TypesInfo, pkg.Syntax), responseScore, responseType != nil,
 			)
 			handler.extras = extras
 			handler.request, handler.response = extras.RequestSchema, extras.ResponseSchema

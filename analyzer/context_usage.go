@@ -29,8 +29,17 @@ type ContextUsage struct {
 	ResponseStatus      int
 	DelegatesContext    bool
 	ReadsRequestBody    bool
-	responseScore       int
+	// RedirectStatus is the 3xx status of a c.Redirect call, directly in the
+	// handler or in a same-package helper that receives the context.
+	RedirectStatus int
+	responseScore  int
 }
+
+// redirectScore ranks a redirect above error-only handlers (non-2xx) and below
+// any 2xx response.
+const redirectScore = 100
+
+const maxHelperDepth = 3
 
 var (
 	queryMethods = map[string]bool{"Query": true, "DefaultQuery": true, "GetQuery": true}
@@ -40,6 +49,12 @@ var (
 // InspectContextUsage walks a handler body and records the query parameters,
 // form fields, uploaded files and non-JSON response content types it uses.
 func InspectContextUsage(body *ast.BlockStmt, info *types.Info) ContextUsage {
+	return InspectContextUsageIn(body, info, nil)
+}
+
+// InspectContextUsageIn is InspectContextUsage that also follows same-package
+// helpers receiving the context, looking for c.Redirect calls in their bodies.
+func InspectContextUsageIn(body *ast.BlockStmt, info *types.Info, files []*ast.File) ContextUsage {
 	var usage ContextUsage
 	if body == nil || info == nil {
 		return usage
@@ -48,6 +63,8 @@ func InspectContextUsage(body *ast.BlockStmt, info *types.Info) ContextUsage {
 	seenForm := map[string]bool{}
 	seenFile := map[string]bool{}
 	usage.responseScore = -1
+	decls := funcDecls(files, info)
+	visited := map[*types.Func]bool{}
 
 	ast.Inspect(body, func(node ast.Node) bool {
 		if selector, ok := node.(*ast.SelectorExpr); ok && selector.Sel.Name == "Body" {
@@ -68,6 +85,9 @@ func InspectContextUsage(body *ast.BlockStmt, info *types.Info) ContextUsage {
 		for _, argument := range call.Args {
 			if isFrameworkContext(info.TypeOf(argument)) {
 				usage.DelegatesContext = true
+				if usage.RedirectStatus == 0 {
+					usage.RedirectStatus = helperRedirect(call, info, decls, visited, 1)
+				}
 			}
 		}
 		return true
@@ -75,8 +95,87 @@ func InspectContextUsage(body *ast.BlockStmt, info *types.Info) ContextUsage {
 	return usage
 }
 
+func funcDecls(files []*ast.File, info *types.Info) map[*types.Func]*ast.FuncDecl {
+	decls := map[*types.Func]*ast.FuncDecl{}
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			decl, ok := declaration.(*ast.FuncDecl)
+			if !ok || decl.Body == nil {
+				continue
+			}
+			if fn, ok := info.Defs[decl.Name].(*types.Func); ok {
+				decls[fn] = decl
+			}
+		}
+	}
+	return decls
+}
+
+// helperRedirect returns the 3xx status of the first c.Redirect found in the
+// body of the function called by call, following nested helpers.
+func helperRedirect(call *ast.CallExpr, info *types.Info, decls map[*types.Func]*ast.FuncDecl, visited map[*types.Func]bool, depth int) int {
+	if depth > maxHelperDepth {
+		return 0
+	}
+	var ident *ast.Ident
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		ident = fun
+	case *ast.SelectorExpr:
+		ident = fun.Sel
+	default:
+		return 0
+	}
+	fn, ok := info.Uses[ident].(*types.Func)
+	if !ok || visited[fn] {
+		return 0
+	}
+	decl := decls[fn]
+	if decl == nil {
+		return 0
+	}
+	visited[fn] = true
+
+	status := 0
+	ast.Inspect(decl.Body, func(node ast.Node) bool {
+		if status != 0 {
+			return false
+		}
+		inner, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if selector, ok := inner.Fun.(*ast.SelectorExpr); ok && isFrameworkContext(info.TypeOf(selector.X)) {
+			if code, ok := redirectCode(selector.Sel.Name, inner, info); ok {
+				status = code
+			}
+			return true
+		}
+		for _, argument := range inner.Args {
+			if isFrameworkContext(info.TypeOf(argument)) {
+				status = helperRedirect(inner, info, decls, visited, depth+1)
+				break
+			}
+		}
+		return true
+	})
+	return status
+}
+
+func redirectCode(method string, call *ast.CallExpr, info *types.Info) (int, bool) {
+	if method != "Redirect" || len(call.Args) == 0 {
+		return 0, false
+	}
+	code, known := constantStatusCode(call.Args[0], info)
+	return code, known && code >= 300 && code < 400
+}
+
 func inspectContextCall(method string, call *ast.CallExpr, info *types.Info, usage *ContextUsage, seenQuery, seenForm, seenFile map[string]bool) {
 	switch {
+	case method == "Redirect":
+		if code, ok := redirectCode(method, call, info); ok && usage.RedirectStatus == 0 {
+			usage.RedirectStatus = code
+		}
 	case queryMethods[method]:
 		name, ok := constantString(call, 0, info)
 		if !ok || seenQuery[name] {
@@ -187,6 +286,14 @@ func (s *HandlerSchema) applyContextUsage(usage ContextUsage, jsonResponseScore 
 		s.NoRequestBody = !usage.ReadsRequestBody && !usage.DelegatesContext
 	}
 	s.RequestBodyConsumed = usage.ReadsRequestBody || usage.DelegatesContext
+
+	if usage.RedirectStatus != 0 && s.ResponseStatus == 0 &&
+		jsonResponseScore < redirectScore && usage.responseScore < redirectScore {
+		s.ResponseStatus = usage.RedirectStatus
+		s.ResponseSchema = spec.Schema{}
+		s.ResponseContentType = ""
+		return
+	}
 
 	if usage.ResponseContentType != "" &&
 		(usage.responseScore > jsonResponseScore || usage.responseScore == jsonResponseScore && !hasJSONSchema) {

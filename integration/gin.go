@@ -344,7 +344,7 @@ func (g *GinHandlerAnalyzer) analyzeHandlerSource(handlerValue reflect.Value) an
 			if decl == nil {
 				continue
 			}
-			return g.schemasFromTypedHandler(decl, pkg.TypesInfo)
+			return g.schemasFromTypedHandler(decl, pkg.TypesInfo, pkg.Syntax)
 		}
 	}
 
@@ -370,7 +370,7 @@ func (g *GinHandlerAnalyzer) loadTypedPackages(dir string) ([]*packages.Package,
 	return pkgs, err
 }
 
-func (g *GinHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *types.Info) analyzer.HandlerSchema {
+func (g *GinHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *types.Info, files []*ast.File) analyzer.HandlerSchema {
 	var schema analyzer.HandlerSchema
 	var responseType types.Type
 	var responseExpr ast.Expr
@@ -415,7 +415,7 @@ func (g *GinHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *t
 		schema.ResponseSchema = g.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoExpr(responseExpr, info)
 	}
 	schema.ApplyContextUsageWithResponseScore(
-		analyzer.InspectContextUsage(decl.Body, info), bestResponseScore, responseType != nil,
+		analyzer.InspectContextUsageIn(decl.Body, info, files), bestResponseScore, responseType != nil,
 	)
 	return schema
 }

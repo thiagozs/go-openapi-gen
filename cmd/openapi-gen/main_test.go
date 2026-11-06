@@ -170,3 +170,16 @@ func TestAnalyzeValueReceiverHandlersWithExternalStore(t *testing.T) {
 	putRetention := findGeneratedHandler(t, handlers, "putRetention")
 	assert.Contains(t, putRetention.request.Properties, "ttl_days")
 }
+
+func TestAnalyzeRedirects(t *testing.T) {
+	_, handlers, err := analyzePackage(options{dir: "testdata/api", framework: "gin"})
+	require.NoError(t, err)
+
+	form := findGeneratedHandler(t, handlers, "formThenRedirect")
+	assert.Equal(t, http.StatusFound, form.responseStatus)
+	assert.Empty(t, form.response)
+	assert.Equal(t, "application/x-www-form-urlencoded", form.extras.RequestContentType)
+
+	direct := findGeneratedHandler(t, handlers, "directRedirect")
+	assert.Equal(t, http.StatusSeeOther, direct.responseStatus)
+}

@@ -101,3 +101,26 @@ func (h handler) putRetention(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, retentionResponse{KeepLast: policy.Keep, TTLDays: int(policy.TTL.Hours() / 24)})
 }
+
+func redirectTo(c *gin.Context, target string) {
+	if c.GetHeader("HX-Request") == "true" {
+		c.Status(http.StatusOK)
+	} else {
+		c.Redirect(http.StatusFound, target)
+	}
+}
+
+func redirectWithMessage(c *gin.Context, msg string) { redirectTo(c, "/x?m="+msg) }
+
+// formThenRedirect reads a form and redirects through nested helpers.
+func (h handler) formThenRedirect(c *gin.Context) {
+	if c.PostForm("name") == "" {
+		redirectWithMessage(c, "error")
+		return
+	}
+	redirectWithMessage(c, "ok")
+}
+
+func (h handler) directRedirect(c *gin.Context) {
+	c.Redirect(http.StatusSeeOther, "/done")
+}

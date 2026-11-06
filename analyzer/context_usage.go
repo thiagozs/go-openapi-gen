@@ -35,8 +35,9 @@ type ContextUsage struct {
 	responseScore  int
 }
 
-// redirectScore ranks a redirect above error-only handlers (non-2xx) and below
-// any 2xx response.
+// redirectScore ranks a redirect above error-only handlers (non-2xx) and above
+// writes with a status only known at run time (usually the error path of a
+// post/redirect/get handler), but below any constant 2xx response.
 const redirectScore = 100
 
 const maxHelperDepth = 3
@@ -53,24 +54,42 @@ func InspectContextUsage(body *ast.BlockStmt, info *types.Info) ContextUsage {
 }
 
 // InspectContextUsageIn is InspectContextUsage that also follows same-package
-// helpers receiving the context, looking for c.Redirect calls in their bodies.
+// helpers receiving the context (up to maxHelperDepth levels), so form, query,
+// redirect and content-type usage hidden behind helpers is still detected.
 func InspectContextUsageIn(body *ast.BlockStmt, info *types.Info, files []*ast.File) ContextUsage {
-	var usage ContextUsage
-	if body == nil || info == nil {
-		return usage
+	w := &usageWalker{
+		info:      info,
+		decls:     funcDecls(files, info),
+		visited:   map[*types.Func]bool{},
+		seenQuery: map[string]bool{},
+		seenForm:  map[string]bool{},
+		seenFile:  map[string]bool{},
 	}
-	seenQuery := map[string]bool{}
-	seenForm := map[string]bool{}
-	seenFile := map[string]bool{}
-	usage.responseScore = -1
-	decls := funcDecls(files, info)
-	visited := map[*types.Func]bool{}
+	w.usage.responseScore = -1
+	if body == nil || info == nil {
+		return w.usage
+	}
+	w.walk(body, 0)
+	return w.usage
+}
 
+type usageWalker struct {
+	info      *types.Info
+	decls     map[*types.Func]*ast.FuncDecl
+	visited   map[*types.Func]bool
+	usage     ContextUsage
+	seenQuery map[string]bool
+	seenForm  map[string]bool
+	seenFile  map[string]bool
+}
+
+func (w *usageWalker) walk(body *ast.BlockStmt, depth int) {
+	info := w.info
 	ast.Inspect(body, func(node ast.Node) bool {
 		if selector, ok := node.(*ast.SelectorExpr); ok && selector.Sel.Name == "Body" {
 			request, ok := selector.X.(*ast.SelectorExpr)
 			if ok && request.Sel.Name == "Request" && isFrameworkContext(info.TypeOf(request.X)) {
-				usage.ReadsRequestBody = true
+				w.usage.ReadsRequestBody = true
 			}
 		}
 		call, ok := node.(*ast.CallExpr)
@@ -79,24 +98,85 @@ func InspectContextUsageIn(body *ast.BlockStmt, info *types.Info, files []*ast.F
 		}
 		selector, isSelector := call.Fun.(*ast.SelectorExpr)
 		if isSelector && isFrameworkContext(info.TypeOf(selector.X)) {
-			inspectContextCall(selector.Sel.Name, call, info, &usage, seenQuery, seenForm, seenFile)
+			inspectContextCall(selector.Sel.Name, call, info, &w.usage, w.seenQuery, w.seenForm, w.seenFile)
 			return true
 		}
+		if isSelector && selector.Sel.Name == "Set" {
+			if contentType, ok := writerContentType(call, selector, info); ok {
+				w.usage.setContentType(contentType)
+				return true
+			}
+		}
+		delegates := false
 		for _, argument := range call.Args {
 			if isFrameworkContext(info.TypeOf(argument)) {
-				usage.DelegatesContext = true
-				if usage.RedirectStatus == 0 {
-					usage.RedirectStatus = helperRedirect(call, info, decls, visited, 1)
-				}
+				delegates = true
 			}
+		}
+		if !delegates {
+			return true
+		}
+		w.usage.DelegatesContext = true
+		if helper := w.helperBody(call); helper != nil && depth < maxHelperDepth {
+			w.walk(helper, depth+1)
 		}
 		return true
 	})
-	return usage
+}
+
+// helperBody returns the body of the same-package function called by call, once.
+func (w *usageWalker) helperBody(call *ast.CallExpr) *ast.BlockStmt {
+	var ident *ast.Ident
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		ident = fun
+	case *ast.SelectorExpr:
+		ident = fun.Sel
+	default:
+		return nil
+	}
+	fn, ok := w.info.Uses[ident].(*types.Func)
+	if !ok || w.visited[fn] {
+		return nil
+	}
+	decl := w.decls[fn]
+	if decl == nil {
+		return nil
+	}
+	w.visited[fn] = true
+	return decl.Body
+}
+
+// writerContentType matches c.Writer.Header().Set("Content-Type", "<const>").
+func writerContentType(call *ast.CallExpr, set *ast.SelectorExpr, info *types.Info) (string, bool) {
+	header, ok := set.X.(*ast.CallExpr)
+	if !ok || len(call.Args) != 2 {
+		return "", false
+	}
+	headerSel, ok := header.Fun.(*ast.SelectorExpr)
+	if !ok || headerSel.Sel.Name != "Header" {
+		return "", false
+	}
+	writer, ok := headerSel.X.(*ast.SelectorExpr)
+	if !ok || writer.Sel.Name != "Writer" || !isFrameworkContext(info.TypeOf(writer.X)) {
+		return "", false
+	}
+	return headerContentType(call, 0, info)
+}
+
+func headerContentType(call *ast.CallExpr, nameIndex int, info *types.Info) (string, bool) {
+	name, ok := constantString(call, nameIndex, info)
+	if !ok || !strings.EqualFold(name, "Content-Type") {
+		return "", false
+	}
+	return constantString(call, nameIndex+1, info)
 }
 
 func funcDecls(files []*ast.File, info *types.Info) map[*types.Func]*ast.FuncDecl {
 	decls := map[*types.Func]*ast.FuncDecl{}
+	if info == nil {
+		return decls
+	}
 	for _, file := range files {
 		for _, declaration := range file.Decls {
 			decl, ok := declaration.(*ast.FuncDecl)
@@ -111,55 +191,15 @@ func funcDecls(files []*ast.File, info *types.Info) map[*types.Func]*ast.FuncDec
 	return decls
 }
 
-// helperRedirect returns the 3xx status of the first c.Redirect found in the
-// body of the function called by call, following nested helpers.
-func helperRedirect(call *ast.CallExpr, info *types.Info, decls map[*types.Func]*ast.FuncDecl, visited map[*types.Func]bool, depth int) int {
-	if depth > maxHelperDepth {
-		return 0
+// setContentType records a content type set through a header, whose status is
+// not known statically.
+func (u *ContextUsage) setContentType(contentType string) {
+	if redirectScore <= u.responseScore {
+		return
 	}
-	var ident *ast.Ident
-	switch fun := call.Fun.(type) {
-	case *ast.Ident:
-		ident = fun
-	case *ast.SelectorExpr:
-		ident = fun.Sel
-	default:
-		return 0
-	}
-	fn, ok := info.Uses[ident].(*types.Func)
-	if !ok || visited[fn] {
-		return 0
-	}
-	decl := decls[fn]
-	if decl == nil {
-		return 0
-	}
-	visited[fn] = true
-
-	status := 0
-	ast.Inspect(decl.Body, func(node ast.Node) bool {
-		if status != 0 {
-			return false
-		}
-		inner, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		if selector, ok := inner.Fun.(*ast.SelectorExpr); ok && isFrameworkContext(info.TypeOf(selector.X)) {
-			if code, ok := redirectCode(selector.Sel.Name, inner, info); ok {
-				status = code
-			}
-			return true
-		}
-		for _, argument := range inner.Args {
-			if isFrameworkContext(info.TypeOf(argument)) {
-				status = helperRedirect(inner, info, decls, visited, depth+1)
-				break
-			}
-		}
-		return true
-	})
-	return status
+	u.responseScore = redirectScore
+	u.ResponseContentType = contentType
+	u.ResponseStatus = 0
 }
 
 func redirectCode(method string, call *ast.CallExpr, info *types.Info) (int, bool) {
@@ -172,6 +212,10 @@ func redirectCode(method string, call *ast.CallExpr, info *types.Info) (int, boo
 
 func inspectContextCall(method string, call *ast.CallExpr, info *types.Info, usage *ContextUsage, seenQuery, seenForm, seenFile map[string]bool) {
 	switch {
+	case method == "Header":
+		if contentType, ok := headerContentType(call, 0, info); ok {
+			usage.setContentType(contentType)
+		}
 	case method == "Redirect":
 		if code, ok := redirectCode(method, call, info); ok && usage.RedirectStatus == 0 {
 			usage.RedirectStatus = code
@@ -288,7 +332,7 @@ func (s *HandlerSchema) applyContextUsage(usage ContextUsage, jsonResponseScore 
 	s.RequestBodyConsumed = usage.ReadsRequestBody || usage.DelegatesContext
 
 	if usage.RedirectStatus != 0 && s.ResponseStatus == 0 &&
-		jsonResponseScore < redirectScore && usage.responseScore < redirectScore {
+		jsonResponseScore < redirectScore && usage.responseScore <= redirectScore {
 		s.ResponseStatus = usage.RedirectStatus
 		s.ResponseSchema = spec.Schema{}
 		s.ResponseContentType = ""

@@ -183,3 +183,19 @@ func TestAnalyzeRedirects(t *testing.T) {
 	direct := findGeneratedHandler(t, handlers, "directRedirect")
 	assert.Equal(t, http.StatusSeeOther, direct.responseStatus)
 }
+
+func TestAnalyzeFollowsContextHelpers(t *testing.T) {
+	_, handlers, err := analyzePackage(options{dir: "testdata/api", framework: "gin"})
+	require.NoError(t, err)
+
+	edit := findGeneratedHandler(t, handlers, "editViaHelper")
+	assert.Equal(t, "application/x-www-form-urlencoded", edit.extras.RequestContentType)
+	assert.Contains(t, edit.request.Properties, "name")
+	require.Len(t, edit.extras.Parameters, 1)
+	assert.Equal(t, "page", edit.extras.Parameters[0].Name)
+	assert.Equal(t, http.StatusFound, edit.responseStatus)
+
+	page := findGeneratedHandler(t, handlers, "page")
+	assert.Equal(t, "text/html", page.extras.ResponseContentType)
+	assert.Equal(t, "string", page.response.Type)
+}

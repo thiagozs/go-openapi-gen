@@ -124,3 +124,31 @@ func (h handler) formThenRedirect(c *gin.Context) {
 func (h handler) directRedirect(c *gin.Context) {
 	c.Redirect(http.StatusSeeOther, "/done")
 }
+
+func parseForm(c *gin.Context) (string, bool) {
+	name := c.PostForm("name")
+	if name == "" {
+		redirectTo(c, "/err")
+		return "", false
+	}
+	_ = c.Query("page")
+	return name, true
+}
+
+// editViaHelper reads its form inside a helper and redirects.
+func (h handler) editViaHelper(c *gin.Context) {
+	if _, ok := parseForm(c); !ok {
+		return
+	}
+	redirectTo(c, "/ok")
+}
+
+func (h handler) render(c *gin.Context, status int, name string) {
+	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	c.Writer.WriteHeader(status)
+}
+
+// page renders HTML through a helper that sets the header by hand.
+func (h handler) page(c *gin.Context) {
+	h.render(c, http.StatusOK, "page")
+}

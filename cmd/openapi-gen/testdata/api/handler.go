@@ -101,3 +101,54 @@ func (h handler) putRetention(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, retentionResponse{KeepLast: policy.Keep, TTLDays: int(policy.TTL.Hours() / 24)})
 }
+
+func redirectTo(c *gin.Context, target string) {
+	if c.GetHeader("HX-Request") == "true" {
+		c.Status(http.StatusOK)
+	} else {
+		c.Redirect(http.StatusFound, target)
+	}
+}
+
+func redirectWithMessage(c *gin.Context, msg string) { redirectTo(c, "/x?m="+msg) }
+
+// formThenRedirect reads a form and redirects through nested helpers.
+func (h handler) formThenRedirect(c *gin.Context) {
+	if c.PostForm("name") == "" {
+		redirectWithMessage(c, "error")
+		return
+	}
+	redirectWithMessage(c, "ok")
+}
+
+func (h handler) directRedirect(c *gin.Context) {
+	c.Redirect(http.StatusSeeOther, "/done")
+}
+
+func parseForm(c *gin.Context) (string, bool) {
+	name := c.PostForm("name")
+	if name == "" {
+		redirectTo(c, "/err")
+		return "", false
+	}
+	_ = c.Query("page")
+	return name, true
+}
+
+// editViaHelper reads its form inside a helper and redirects.
+func (h handler) editViaHelper(c *gin.Context) {
+	if _, ok := parseForm(c); !ok {
+		return
+	}
+	redirectTo(c, "/ok")
+}
+
+func (h handler) render(c *gin.Context, status int, name string) {
+	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	c.Writer.WriteHeader(status)
+}
+
+// page renders HTML through a helper that sets the header by hand.
+func (h handler) page(c *gin.Context) {
+	h.render(c, http.StatusOK, "page")
+}

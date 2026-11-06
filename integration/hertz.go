@@ -355,7 +355,7 @@ func (h *HertzHandlerAnalyzer) analyzeHandlerSource(handlerValue reflect.Value) 
 			if decl == nil {
 				continue
 			}
-			return h.schemasFromTypedHandler(decl, pkg.TypesInfo)
+			return h.schemasFromTypedHandler(decl, pkg.TypesInfo, pkg.Syntax)
 		}
 	}
 
@@ -381,7 +381,7 @@ func (h *HertzHandlerAnalyzer) loadTypedPackages(dir string) ([]*packages.Packag
 	return pkgs, err
 }
 
-func (h *HertzHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *types.Info) analyzer.HandlerSchema {
+func (h *HertzHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info *types.Info, files []*ast.File) analyzer.HandlerSchema {
 	var schema analyzer.HandlerSchema
 	var responseType types.Type
 	var responseExpr ast.Expr
@@ -426,7 +426,7 @@ func (h *HertzHandlerAnalyzer) schemasFromTypedHandler(decl *ast.FuncDecl, info 
 		schema.ResponseSchema = h.schemaAnalyzer.GetSchemaGenerator().GenerateSchemaFromGoExpr(responseExpr, info)
 	}
 	schema.ApplyContextUsageWithResponseScore(
-		analyzer.InspectContextUsage(decl.Body, info), bestResponseScore, responseType != nil,
+		analyzer.InspectContextUsageIn(decl.Body, info, files), bestResponseScore, responseType != nil,
 	)
 	return schema
 }
